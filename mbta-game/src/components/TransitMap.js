@@ -20,7 +20,7 @@ import {
 } from '../theme/pixel';
 import { landmarks } from '../data/landmarks';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
-import { LandmarkPaths } from './LandmarkSprite';
+import { AnimatedLandmarkPaths } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
@@ -379,7 +379,7 @@ const TransitMap = forwardRef(function TransitMap(
 
           {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
           {projected.placedLandmarks.map(({ landmark, x, y, px }) => (
-            <LandmarkPaths key={landmark.id} landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
+            <AnimatedLandmarkPaths key={landmark.id} landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
           ))}
 
           {/* stop sprites */}

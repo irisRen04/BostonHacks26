@@ -15,7 +15,7 @@ export default function LandmarkCard({ landmark, discovered, atNearestStop, onGo
     <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
         <View style={styles.thumb}>
-          <LandmarkSprite landmark={landmark} px={2} discovered={discovered} />
+          <LandmarkSprite landmark={landmark} px={2} discovered={discovered} animated />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.kicker}>{discovered ? '★ LANDMARK' : '? UNDISCOVERED'}</Text>
@@ -61,7 +61,7 @@ export function DiscoveryPopup({ landmark, onClose }) {
       <View style={[ui.panel, styles.popup]}>
         <Text style={styles.popupTitle}>DISCOVERED!</Text>
         <View style={styles.popupArt}>
-          <LandmarkSprite landmark={landmark} px={5} />
+          <LandmarkSprite landmark={landmark} px={5} animated />
         </View>
         <Text style={styles.popupName}>{landmark.name.toUpperCase()}</Text>
         <Text style={styles.text}>Added to Places to visit.</Text>

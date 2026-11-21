@@ -38,29 +38,37 @@ const LETTERS = {
   O: ['###', '#.#', '#.#', '#.#', '###'],
 };
 
-/** Kenmore Square's Citgo sign: billboard with the triangle and lettering, on a steel frame atop a brick roof. */
+/**
+ * Kenmore Square's Citgo sign: a big triangle over smaller CITGO lettering, on a
+ * steel frame atop a brick roof. Also returns which rows are the lit sign face.
+ */
 function citgoSign() {
   const word = 'CITGO';
-  const inner = word.length * 3 - 2 + (word.length - 1); // letter widths (I is 1 wide) + 1px gaps
-  const W = inner + 4; // border + padding on both sides
+  const textWidth = word.length * 3 - 2 + (word.length - 1); // letters (I is 1 wide) + 1px gaps
+  const W = textWidth + 6; // border + 2px padding each side
   const mid = Math.floor(W / 2);
   const rows = [];
   const line = (fn) => rows.push(Array.from({ length: W }, (_, x) => fn(x)).join(''));
   const edge = (x) => x === 0 || x === W - 1;
+  const blank = (x) => (edge(x) ? 'K' : 'W');
 
   line(() => 'K');
-  line((x) => (edge(x) ? 'K' : 'W'));
-  // the triangle: red outline, orange inside, growing 1px each side per row
-  for (let r = 0; r < 6; r++) {
+  const faceStart = rows.length;
+  line(blank);
+  // the triangle fills almost the whole width: red edge, orange inside
+  const TRI = mid - 1; // rows; base is 2*TRI-1 wide
+  for (let r = 0; r < TRI; r++) {
     line((x) => {
       if (edge(x)) return 'K';
       const d = Math.abs(x - mid);
       if (d > r) return 'W';
-      return r >= 2 && r < 5 && d < r - 1 ? 'O' : 'R';
+      const inside = r >= 2 && r < TRI - 1 && d < r - 1;
+      return inside ? 'O' : 'R';
     });
   }
-  line((x) => (edge(x) ? 'K' : 'W'));
-  // CITGO in blue
+  line(blank);
+  // CITGO in blue, smaller than the triangle
+  const pad = Math.floor((W - textWidth) / 2);
   for (let r = 0; r < 5; r++) {
     const text = word
       .split('')
@@ -68,9 +76,10 @@ function citgoSign() {
       .join('.')
       .replace(/#/g, 'B')
       .replace(/\./g, 'W');
-    line((x) => (edge(x) ? 'K' : x - 2 >= 0 && x - 2 < text.length ? text[x - 2] : 'W'));
+    line((x) => (edge(x) ? 'K' : x - pad >= 0 && x - pad < text.length ? text[x - pad] : 'W'));
   }
-  line((x) => (edge(x) ? 'K' : 'W'));
+  line(blank);
+  const faceEnd = rows.length;
   line(() => 'K');
   // steel frame: two legs per side with cross braces
   const legs = [3, 6, W - 7, W - 4];
@@ -86,8 +95,10 @@ function citgoSign() {
   line((x) => (edge(x) ? 'K' : 'N'));
   line((x) => (edge(x) ? 'K' : x % 3 === 1 ? 'M' : 'N'));
   line((x) => (edge(x) ? 'K' : 'N'));
-  return rows;
+  return { rows, faceStart, faceEnd };
 }
+
+const CITGO = citgoSign();
 
 const CDS_COLORS = {
   K: PALETTE.ink,
@@ -100,13 +111,16 @@ const CDS_COLORS = {
 const CITGO_COLORS = {
   K: PALETTE.ink,
   W: '#f4f4f4', // sign face
-  R: '#d9413b', // triangle red
-  O: '#f08a24', // triangle orange
+  R: '#ff3b2f', // triangle red (lit)
+  O: '#ffa126', // triangle orange (lit)
   B: '#2b4fb3', // CITGO lettering
   S: '#6b7393', // steel frame
   N: '#9b4a35', // brick
   M: '#ffd23f', // lit windows
 };
+
+// The same sign with its lights off.
+const CITGO_UNLIT = { W: '#aeb3bf', R: '#7a3532', O: '#8a5a33', B: '#3e4a78' };
 
 /** Undiscovered landmarks: outline stays, everything else turns a dark slate. */
 export function silhouetteOf(colors) {
@@ -146,7 +160,9 @@ export const landmarks = [
     blurb: 'The glowing sign over Kenmore Square, a Boston icon you can spot from all over the city.',
     fact: 'It rises just beyond Fenway Park\'s Green Monster, so it shows up on TV during Red Sox games.',
     colors: CITGO_COLORS,
-    sprite: citgoSign(),
+    sprite: CITGO.rows,
+    // the real sign's lights come on from the top down, then it starts over
+    lightUp: { from: CITGO.faceStart, to: CITGO.faceEnd, unlit: CITGO_UNLIT },
   },
 ];
 
