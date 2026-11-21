@@ -39,7 +39,7 @@ const PIN_UNTIL = 0.25; // ...as small pins, until you're close enough for the b
 // How a landmark is drawn at this zoom: a pin, or its building growing from 1 to 3 points per pixel.
 function landmarkLook(scale) {
   if (scale < PIN_UNTIL) return { pin: true, px: 2 };
-  return { pin: false, px: scale < 0.5 ? 1 : scale < 1 ? 2 : 3 };
+  return { pin: false, px: scale < 0.6 ? 2 : 3 }; // buildings start at 2 points per pixel
 }
 
 // Chunkier track and bigger stop sprites as you zoom in.
