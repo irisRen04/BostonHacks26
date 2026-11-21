@@ -26,49 +26,51 @@ function NeighborCell({ dir, ids, onSelect }) {
 }
 
 /**
- * At a junction the rider picks a branch instead of an arrow. The stop they came from
- * is split out as a separate "back" button; every other connection is a choice.
+ * At a junction the choices are signs on the map. This panel explains the sign
+ * the rider tapped: which trains go that way, the next stop, and where they end up.
  */
-function JunctionChoices({ station, previousId, onSelect }) {
-  const options = routeOptions(station.id);
-  const back = options.find((o) => o.id === previousId);
-  const forward = options.filter((o) => o.id !== previousId);
+function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
+  const option = activeSignId ? routeOptions(station.id).find((o) => o.id === activeSignId) : null;
+  if (!option) {
+    return (
+      <View style={styles.junction}>
+        <Text style={styles.prompt}>THE LINE SPLITS!</Text>
+        <Text style={styles.hint}>Tap a sign on the map to see where it goes. Tap it again to ride.</Text>
+      </View>
+    );
+  }
+  const isBack = option.id === previousId;
+  const trains = option.branches.length === 1 ? `${option.branches[0]} TRAIN` : `${option.branches.join(' · ')} TRAINS`;
   return (
     <View style={styles.junction}>
-      <Text style={styles.prompt}>THE LINE SPLITS! WHERE TO?</Text>
-      {forward.map((o) => (
-        <PixelButton key={o.id} onPress={() => onSelect(o.id)} style={styles.option}>
-          <View style={styles.optionBranches}>
-            {o.branches.map((b) => (
-              <View key={b} style={styles.branchTile}>
-                <Text style={styles.branchTileText}>{b}</Text>
-              </View>
-            ))}
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.optionName} numberOfLines={1}>
-              {stationsById[o.id].name.toUpperCase()}
-            </Text>
-            <Text style={styles.optionToward} numberOfLines={1}>
-              to {o.toward.join(' / ')}
-            </Text>
-          </View>
-          <Text style={styles.cursor}>▶</Text>
-        </PixelButton>
-      ))}
-      {back && (
-        <PixelButton onPress={() => onSelect(back.id)} style={styles.back}>
-          <Text style={styles.backText} numberOfLines={1}>
-            ◀ BACK TO {stationsById[back.id].name.toUpperCase()}
+      <View style={styles.infoRow}>
+        <View style={styles.optionBranches}>
+          {option.branches.map((b) => (
+            <View key={b} style={styles.branchTile}>
+              <Text style={styles.branchTileText}>{b}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.prompt}>{isBack ? `BACK · ${trains}` : trains}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>
+            Next stop: {stationsById[option.id].name}
           </Text>
+          <Text style={styles.infoText} numberOfLines={1}>
+            Toward {option.toward.join(' / ')}
+          </Text>
+        </View>
+        <PixelButton onPress={() => onSelect(option.id)} style={styles.go}>
+          <Text style={styles.goText}>GO ▶</Text>
         </PixelButton>
-      )}
+      </View>
+      <Text style={styles.hint}>Tap the gold sign again to ride.</Text>
     </View>
   );
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
-export default function StationCard({ station, previousId, onSelect, onClose, onLayout }) {
+export default function StationCard({ station, previousId, activeSignId, onSelect, onClose, onLayout }) {
   return (
     <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
@@ -98,7 +100,7 @@ export default function StationCard({ station, previousId, onSelect, onClose, on
       </View>
 
       {isJunction(station.id) ? (
-        <JunctionChoices station={station} previousId={previousId} onSelect={onSelect} />
+        <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />
       ) : (
         <View style={styles.pad}>
           <NeighborCell dir="up" ids={station.up} onSelect={onSelect} />
@@ -143,8 +145,12 @@ const styles = StyleSheet.create({
   neighbor: { paddingHorizontal: 6, paddingVertical: 1, flexShrink: 1 },
 
   junction: { marginTop: 12, gap: 8 },
+  hint: { fontFamily: FONT_BODY, fontSize: 18, color: '#b7c0d8' },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  infoText: { fontFamily: FONT_BODY, fontSize: 18, color: PALETTE.white },
+  go: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: PALETTE.green },
+  goText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
   prompt: { fontFamily: FONT_TITLE, fontSize: 8, lineHeight: 12, color: PALETTE.gold, marginBottom: 2 },
-  option: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingVertical: 6 },
   optionBranches: { flexDirection: 'row', gap: 3, minWidth: 24 },
   branchTile: {
     width: 22,
@@ -156,9 +162,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   branchTileText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
-  optionName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
-  optionToward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
-  cursor: { fontSize: 14, color: PALETTE.ink },
-  back: { alignItems: 'center', paddingVertical: 8, backgroundColor: '#c9cfe0' },
-  backText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.ink },
 });

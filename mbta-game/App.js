@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { PressStart2P_400Regular } from '@expo-google-fonts/press-start-2p';
 import { VT323_400Regular } from '@expo-google-fonts/vt323';
 import { useFonts } from 'expo-font';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import useAvatar from './src/avatar/useAvatar';
@@ -10,7 +10,7 @@ import GameMenu from './src/components/GameMenu';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
 import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
-import { stationsById } from './src/data/greenLine';
+import { isJunction, routeOptions, stationsById } from './src/data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 export default function App() {
@@ -27,24 +27,55 @@ export default function App() {
   const [cardHeight, setCardHeight] = useState(0);
   const menuBottom = selected ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
+  // At a junction: the sign the rider has tapped once (tapping it again rides there).
+  const [activeSignId, setActiveSignId] = useState(null);
+
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
+    setActiveSignId(null);
     setTrip({ currentId: id, previousId: null });
     if (id) mapRef.current?.focusStation(stationsById[id]);
   }, []);
 
   // Riding to a connected stop from the card remembers where we came from and follows the rider.
   const rideTo = useCallback((id) => {
+    setActiveSignId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
+
+  // One sign per way out of a junction; the way you came in is the BACK sign.
+  const signs = useMemo(() => {
+    if (!selectedId || !isJunction(selectedId)) return null;
+    return routeOptions(selectedId).map((o) => ({
+      id: o.id,
+      kind: o.id === trip.previousId ? 'back' : 'branch',
+      branches: o.branches,
+    }));
+  }, [selectedId, trip.previousId]);
+
+  const pressSign = useCallback(
+    (id) => {
+      if (id === activeSignId) rideTo(id);
+      else setActiveSignId(id);
+    },
+    [activeSignId, rideTo],
+  );
 
   if (!fontsLoaded) return <View style={styles.page} />;
 
   return (
     <View style={styles.page}>
       <View style={styles.phone}>
-        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt} avatar={avatar} />
+        <TransitMap
+          ref={mapRef}
+          selectedId={selectedId}
+          onSelectStation={placeAt}
+          avatar={avatar}
+          signs={signs}
+          activeSignId={activeSignId}
+          onSignPress={pressSign}
+        />
 
         <View style={styles.header} pointerEvents="none">
           <View style={styles.lineBadge}>
@@ -65,6 +96,7 @@ export default function App() {
           <StationCard
             station={selected}
             previousId={trip.previousId}
+            activeSignId={activeSignId}
             onSelect={rideTo}
             onClose={() => placeAt(null)}
             onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}

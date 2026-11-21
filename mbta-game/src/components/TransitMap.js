@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { PanResponder, Platform, StyleSheet, View } from 'react-native';
 import Svg, { Defs, G, Path, Pattern, Rect, Text as SvgText } from 'react-native-svg';
 
-import { greenBounds, stations, tracks } from '../data/greenLine';
+import { greenBounds, stations, stationsById, tracks } from '../data/greenLine';
 import {
   FONT_TITLE,
   LINE_PIXEL_COLORS,
@@ -18,6 +18,7 @@ import {
   stampSprite,
   topEdge,
 } from '../theme/pixel';
+import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
@@ -64,7 +65,14 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * Map coordinates are State Plane meters (y = north), projected to screen as
  *   sx = (x - cx) * scale + width / 2,  sy = (cy - y) * scale + height / 2.
  */
-const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation, avatar }, ref) {
+/**
+ * signs / activeSignId / onSignPress: at a junction, the signposts to draw around the
+ * current stop (see JunctionSigns). Tapping a sign calls onSignPress(neighbourId).
+ */
+const TransitMap = forwardRef(function TransitMap(
+  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress },
+  ref,
+) {
   const [size, setSize] = useState(null);
   const [camera, setCamera] = useState(null);
   const cameraRef = useRef(camera);
@@ -75,6 +83,9 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation,
   cameraRef.current = camera;
   sizeRef.current = size;
   onSelectRef.current = onSelectStation;
+  const onSignRef = useRef(onSignPress);
+  onSignRef.current = onSignPress;
+  const placedSignsRef = useRef([]);
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
@@ -196,8 +207,13 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation,
       onPanResponderRelease: () => {
         const g = gesture.current;
         if (g && !g.moved && g.tap) {
-          const hit = hitTest(g.tap.x, g.tap.y);
-          onSelectRef.current?.(hit ? hit.id : null);
+          const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
+          if (sign) {
+            onSignRef.current?.(sign.id);
+          } else {
+            const hit = hitTest(g.tap.x, g.tap.y);
+            onSelectRef.current?.(hit ? hit.id : null);
+          }
         }
         gesture.current = null;
       },
@@ -283,12 +299,22 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation,
     const spritePaths = Object.entries(sprites).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
-    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf };
+    const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
+    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
   const current = projected?.stops.find((p) => p.station.id === selectedId);
+
+  // Junction signposts, laid out around the current stop toward each neighbour.
+  const placedSigns = useMemo(() => {
+    if (!projected || !current || !signs?.length) return [];
+    const positions = Object.fromEntries(signs.map((sg) => [sg.id, projected.stationToScreen(stationsById[sg.id])]));
+    return layoutSigns(signs, current, positions);
+  }, [projected, current, signs]);
+  placedSignsRef.current = placedSigns;
+  const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
 
   return (
     <View ref={containerRef} style={styles.container} onLayout={onLayout} {...responder.panHandlers}>
@@ -334,6 +360,16 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation,
               ({ station }) =>
                 showAllLabels || station.terminus || station.transfers.length > 0 || station.id === selectedId || station.name === 'Kenmore',
             )
+            // while junction signs are up, clear nameplates around the junction so the signs read clearly
+            .filter(({ station, x, y }) => {
+              if (!placedSigns.length) return true;
+              // nearest point of the nameplate box to the junction
+              const left = x;
+              const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
+              const nx = Math.min(Math.max(current.x, left), right);
+              const ny = Math.min(Math.max(current.y, y - 8), y + 8);
+              return Math.hypot(nx - current.x, ny - current.y) > SIGN_CLEAR_RADIUS;
+            })
             .map(({ station, x, y }) => (
               <Nameplate
                 key={`l-${station.id}`}
@@ -347,6 +383,17 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation,
           {/* the rider */}
           {current && (
             <PlayerAvatar avatar={avatar} x={current.x} y={current.y - projected.spriteHalf - PLAYER_HEIGHT / 2 - 2} />
+          )}
+
+          {/* junction signposts */}
+          {placedSigns.length > 0 && (
+            <JunctionSigns
+              placed={placedSigns}
+              center={current}
+              spriteHalf={projected.spriteHalf}
+              activeId={activeSignId}
+              target={signTarget}
+            />
           )}
         </Svg>
       )}
