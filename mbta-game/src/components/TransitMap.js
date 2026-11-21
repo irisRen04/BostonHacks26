@@ -21,6 +21,7 @@ import {
 } from '../theme/pixel';
 import { landmarks } from '../data/landmarks';
 import parks from '../data/parks.json';
+import sea from '../data/sea.json';
 import water from '../data/water.json';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
 import { AnimatedLandmarkPaths } from './LandmarkSprite';
@@ -29,6 +30,7 @@ import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
+const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
 const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far
 
@@ -68,6 +70,10 @@ const TREES = [
 // Every water / park ring, flattened once (outer edges and holes; filled even-odd)
 const WATER_RINGS = water.bodies.flatMap((b) => b.rings);
 const PARK_RINGS = parks.bodies.flatMap((b) => b.rings);
+// Boston Harbor: sea areas plus islands (holes), and the coastline for beaches.
+// Filled separately from lakes/rivers so overlaps don't cancel out under even-odd.
+const SEA_RINGS = sea.rings;
+const COAST_LINES = sea.coast;
 const closeRings = (rings) => rings.map((r) => [...r, r[0]]);
 
 // Ground texture tile, in map pixels: [x, y, colour]
@@ -128,7 +134,12 @@ const TransitMap = forwardRef(function TransitMap(
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
-    const cam = { ...next, scale };
+    // keep the view centred near the Green Line so you can't scroll off into empty map
+    const cam = {
+      scale,
+      cx: Math.min(greenBounds.maxX + PAN_MARGIN, Math.max(greenBounds.minX - PAN_MARGIN, next.cx)),
+      cy: Math.min(greenBounds.maxY + PAN_MARGIN, Math.max(greenBounds.minY - PAN_MARGIN, next.cy)),
+    };
     cameraRef.current = cam;
     setCamera(cam);
   }, []);
@@ -273,7 +284,7 @@ const TransitMap = forwardRef(function TransitMap(
       setSize({ width, height });
       sizeRef.current = { width, height };
       const fit = fitCamera(width, height);
-      minScaleRef.current = fit.scale * 0.6;
+      minScaleRef.current = fit.scale * 0.9; // a little past "whole line fits"
       if (!cameraRef.current) applyCamera(fit);
       measureOrigin();
     },
@@ -314,12 +325,14 @@ const TransitMap = forwardRef(function TransitMap(
       fill: fillRings(parkScreen, gox, goy, width, height),
     };
 
-    // water: a sandy bank traced along every shore, then the water filled on top
+    // water: a sandy bank traced along every shore and the coast, then the water filled on top
     const waterScreen = WATER_RINGS.map((ring) => toScreen(ring));
+    const banks = [...closeRings(waterScreen), ...COAST_LINES.map((line) => toScreen(line))];
     const waterPaths = {
       // banks only once zoomed in a bit: zoomed all the way out they'd be wider than thin rivers
-      shore: style.track >= 2 ? cellsToPath(rasterize(closeRings(waterScreen), 2, gox, goy, width, height), gox, goy) : '',
+      shore: style.track >= 2 ? cellsToPath(rasterize(banks, 2, gox, goy, width, height), gox, goy) : '',
       fill: fillRings(waterScreen, gox, goy, width, height),
+      sea: fillRings(SEA_RINGS.map((ring) => toScreen(ring)), gox, goy, width, height),
     };
 
     // other lines: flat, muted, one size thinner
@@ -445,6 +458,7 @@ const TransitMap = forwardRef(function TransitMap(
 
           {/* rivers, ponds and reservoirs */}
           {projected.waterPaths.shore ? <Path d={projected.waterPaths.shore} fill={PALETTE.shore} /> : null}
+          {projected.waterPaths.sea ? <Path d={projected.waterPaths.sea} fill="url(#waves)" /> : null}
           {projected.waterPaths.fill ? <Path d={projected.waterPaths.fill} fill="url(#waves)" /> : null}
 
           {/* the rest of the MBTA, muted */}

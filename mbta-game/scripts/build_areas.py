@@ -3,11 +3,17 @@ Builds the map's background areas from OpenStreetMap Overpass exports:
 
     python3 scripts/build_areas.py water /path/to/overpass-water.json   -> src/data/water.json
     python3 scripts/build_areas.py parks /path/to/overpass-parks.json   -> src/data/parks.json
+    python3 scripts/build_areas.py sea   /path/to/overpass-coast.json   -> src/data/sea.json
 
 Overpass queries (bbox S,W,N,E around the Green Line, e.g. 42.29,-71.29,42.43,-71.01):
 
     water: [out:json];( way["natural"="water"](bbox); relation["natural"="water"](bbox); );out geom;
     parks: [out:json];( way["leisure"="park"](bbox); relation["leisure"="park"](bbox); );out geom;
+    sea:   [out:json];way["natural"="coastline"](42.14,-71.41,42.56,-70.69);out geom;  (wider: open sea)
+
+The sea is built from coastline lines (land on the left, water on the right):
+they are joined, clipped to the map rectangle, and each sea area is closed by
+walking the rectangle's edge clockwise. Islands become holes.
 
 Shapes are converted from lat/lon to NAD83 Massachusetts State Plane meters (the
 same coordinates as the stations), simplified, and tiny ponds are dropped.
@@ -47,8 +53,9 @@ def project(lat, lon):
 
 # ---- geometry helpers
 
-MIN_AREA = {'water': 15000, 'parks': 20000}  # m^2; smaller areas are a pixel or two even zoomed in
+MIN_AREA = {'water': 15000, 'parks': 20000, 'sea': 15000}  # m^2; smaller areas are a pixel or two even zoomed in
 TOLERANCE = 6  # m; Douglas-Peucker simplification
+SEA_TOLERANCE = 12  # m; the coastline covers a much bigger area, so keep it lighter
 
 
 def area(ring):
@@ -115,7 +122,131 @@ def to_xy(geom):
     return [tuple(round(c, 1) for c in project(g['lat'], g['lon'])) for g in geom]
 
 
+# Map rectangle for the sea, a little inside the downloaded lat/lon box so every
+# coastline that crosses it is complete.
+SEA_BOX = (42.15, -71.40, 42.55, -70.70)  # south, west, north, east: past anything the map can show
+
+
+def sea_rect():
+    s, w, n, e = SEA_BOX
+    sw, se, nw, ne = project(s, w), project(s, e), project(n, w), project(n, e)
+    return max(sw[0], nw[0]), max(sw[1], se[1]), min(se[0], ne[0]), min(nw[1], ne[1])
+
+
+def join_directed(ways):
+    """Join coastline ways end-to-start, keeping their direction."""
+    chains = [list(w) for w in ways]
+    merged = True
+    while merged:
+        merged = False
+        by_start = {c[0]: i for i, c in enumerate(chains)}
+        for i, c in enumerate(chains):
+            j = by_start.get(c[-1])
+            if j is not None and j != i and c[0] != c[-1]:
+                chains[i] = c + chains[j][1:]
+                chains.pop(j)
+                merged = True
+                break
+    return chains
+
+
+def build_sea(elements, out):
+    xmin, ymin, xmax, ymax = sea_rect()
+    W, H = xmax - xmin, ymax - ymin
+    PERIM = 2 * (W + H)
+    inside = lambda p: xmin <= p[0] <= xmax and ymin <= p[1] <= ymax
+
+    def t_of(p):  # clockwise position along the rectangle edge, starting top-left
+        x, y = p
+        if abs(y - ymax) < 1e-6:
+            return x - xmin
+        if abs(x - xmax) < 1e-6:
+            return W + (ymax - y)
+        if abs(y - ymin) < 1e-6:
+            return W + H + (xmax - x)
+        return 2 * W + H + (y - ymin)
+
+    corners = [(0, (xmin, ymax)), (W, (xmax, ymax)), (W + H, (xmax, ymin)), (2 * W + H, (xmin, ymin))]
+
+    def clip_point(a, b):  # where segment a(outside)->b(inside) or reverse crosses the rectangle
+        best = None
+        for axis, val in ((0, xmin), (0, xmax), (1, ymin), (1, ymax)):
+            da = b[axis] - a[axis]
+            if da == 0:
+                continue
+            t = (val - a[axis]) / da
+            if 0 <= t <= 1:
+                q = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+                q = (min(max(q[0], xmin), xmax), min(max(q[1], ymin), ymax))
+                if abs(q[0] - (a[0] + t * (b[0] - a[0]))) < 1e-6 and abs(q[1] - (a[1] + t * (b[1] - a[1]))) < 1e-6:
+                    if best is None or t < best[0]:
+                        best = (t, q)
+        return best[1]
+
+    ways = [to_xy(el['geometry']) for el in elements if el.get('geometry')]
+    pieces, islands, coast = [], [], []
+    for chain in join_directed(ways):
+        closed = chain[0] == chain[-1]
+        if closed and all(inside(p) for p in chain):
+            if area(chain) >= MIN_AREA['sea']:
+                ring = simplify(chain[:-1], SEA_TOLERANCE)
+                islands.append(ring)
+                coast.append(ring + [ring[0]])
+            continue
+        if closed:  # a loop crossing the edge: start it outside so it clips like an open line
+            k = next(i for i, p in enumerate(chain) if not inside(p))
+            chain = chain[k:-1] + chain[:k + 1]
+        cur = None
+        for a, b in zip(chain, chain[1:]):
+            ia, ib = inside(a), inside(b)
+            if not ia and ib:
+                cur = [clip_point(a, b), b]
+            elif ia and ib and cur is not None:
+                cur.append(b)
+            elif ia and not ib and cur is not None:
+                cur.append(clip_point(b, a))
+                pieces.append(simplify(cur, SEA_TOLERANCE))
+                cur = None
+    for pc in pieces:
+        coast.append(pc)
+
+    # close sea areas: leave at a piece's exit, walk the edge clockwise to the next entry
+    rings, used = [], [False] * len(pieces)
+    for start in range(len(pieces)):
+        if used[start]:
+            continue
+        ring, i = [], start
+        while True:
+            used[i] = True
+            ring += pieces[i]
+            t_exit = t_of(pieces[i][-1])
+            nxt = min(range(len(pieces)), key=lambda j: (t_of(pieces[j][0]) - t_exit) % PERIM)
+            t_entry = t_of(pieces[nxt][0])
+            span = (t_entry - t_exit) % PERIM
+            for t, c in sorted(corners, key=lambda tc: (tc[0] - t_exit) % PERIM):
+                if 0 < (t - t_exit) % PERIM < span:
+                    ring.append(c)
+            if nxt == start or used[nxt]:
+                break
+            i = nxt
+        rings.append(ring)
+
+    to_int = lambda r: [[round(x), round(y)] for x, y in r]
+    data = {
+        'source': 'OpenStreetMap contributors (ODbL)',
+        'rings': [to_int(r) for r in rings + islands],
+        'coast': [to_int(c) for c in coast],
+    }
+    with open(out, 'w') as f:
+        json.dump(data, f, separators=(',', ':'))
+    print(f'wrote {len(rings)} sea areas, {len(islands)} islands, {len(coast)} coast lines -> {out}')
+    for r in rings:
+        print(f'  sea area {area(r) / 1e6:.2f} km^2')
+
+
 def main(kind, src, out):
+    if kind == 'sea':
+        return build_sea(json.load(open(src))['elements'], out)
     elements = json.load(open(src))['elements']
     bodies = []  # each: {name, rings: [[x,y],...]} ; rings = outers + inners (even-odd fill)
     for el in elements:
