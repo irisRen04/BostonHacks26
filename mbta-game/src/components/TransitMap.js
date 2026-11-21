@@ -429,26 +429,31 @@ const TransitMap = forwardRef(function TransitMap(
   landmarkHitsRef.current = projected ? projected.placedLandmarks.map((p) => p.hit) : [];
   const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
 
-  // ---- labels: gather every candidate, then place them in priority order and skip
-  // any that would overlap one already placed (it comes back when you zoom in)
+  // ---- labels: gather every candidate, then place them in priority order. Each label
+  // tries the right of its stop first, then the left; if both would overlap a label
+  // already placed it's skipped (it comes back when you zoom in). Ties in priority go
+  // to the label nearest the middle of the screen.
   const placedLabels = [];
   if (projected) {
+    const labelWidth = (text) => text.length * LABEL_SIZE + 8;
     const candidates = [];
     for (const { station, x, y } of projected.stops) {
       const important = station.terminus || station.transfers.length > 0 || station.name === 'Kenmore';
       if (!(showAllLabels || important || station.id === selectedId)) continue;
+      const text = station.name.toUpperCase();
       if (placedSigns.length && station.id !== selectedId) {
         // while junction signs are up, keep labels clear of the junction so the signs read clearly
-        const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
+        const right = x + projected.spriteHalf + 4 + labelWidth(text);
         const nx = Math.min(Math.max(current.x, x), right);
         const ny = Math.min(Math.max(current.y, y - 8), y + 8);
         if (Math.hypot(nx - current.x, ny - current.y) <= SIGN_CLEAR_RADIUS) continue;
       }
       candidates.push({
         key: `l-${station.id}`,
-        x: Math.round(x + projected.spriteHalf + 4),
+        ax: x,
         y: Math.round(y),
-        text: station.name.toUpperCase(),
+        gap: projected.spriteHalf + 4, // room for the stop icon between it and the label
+        text,
         active: station.id === selectedId,
         priority: station.id === selectedId ? 0 : important ? 1 : 4,
       });
@@ -457,22 +462,39 @@ const TransitMap = forwardRef(function TransitMap(
       const known = !!discovered?.[landmark.id];
       candidates.push({
         key: `lm-${landmark.id}`,
-        x: Math.round(x + w / 2 + 2),
+        ax: x,
         y: Math.round(y - h + 8),
+        gap: w / 2 + 2,
         text: known ? `★ ${landmark.shortName}` : '???',
         active: known,
         priority: known ? 2 : 3,
       });
     }
-    candidates.sort((p, q) => p.priority - q.priority);
+    const cx = size.width / 2;
+    const cy = size.height / 2;
+    const fromCenter = (c) => Math.hypot(c.ax - cx, c.y - cy);
+    candidates.sort((p, q) => p.priority - q.priority || fromCenter(p) - fromCenter(q));
     const boxes = [];
     const PAD = 2;
+    const overlaps = (box) => boxes.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0);
     for (const c of candidates) {
-      const box = { x0: c.x - PAD, x1: c.x + c.text.length * LABEL_SIZE + 8 + PAD, y0: c.y - LABEL_SIZE / 2 - 4 - PAD, y1: c.y + LABEL_SIZE / 2 + 4 + PAD };
-      if (box.x1 < 0 || box.x0 > size.width || box.y1 < 0 || box.y0 > size.height) continue;
-      if (c.priority > 0 && boxes.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0)) continue;
-      boxes.push(box);
-      placedLabels.push(c);
+      const w = labelWidth(c.text);
+      const y0 = c.y - LABEL_SIZE / 2 - 4 - PAD;
+      const y1 = c.y + LABEL_SIZE / 2 + 4 + PAD;
+      // right of the stop first, then the left
+      const spots = [Math.round(c.ax + c.gap), Math.round(c.ax - c.gap - w)];
+      let placed = null;
+      for (const x of spots) {
+        const box = { x0: x - PAD, x1: x + w + PAD, y0, y1 };
+        if (box.x1 < 0 || box.x0 > size.width || y1 < 0 || y0 > size.height) continue;
+        if (c.priority === 0 || !overlaps(box)) {
+          placed = { x, box };
+          break;
+        }
+      }
+      if (!placed) continue;
+      boxes.push(placed.box);
+      placedLabels.push({ ...c, x: placed.x });
     }
   }
 
