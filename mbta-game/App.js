@@ -15,7 +15,7 @@ import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/component
 import { isJunction, routeOptions, stationsById } from './src/data/greenLine';
 import { landmarks, landmarksById } from './src/data/landmarks';
 import useDiscoveries from './src/data/useDiscoveries';
-import { useLiveTrains } from './src/live/mbta';
+import { useArrivals, useLiveTrains } from './src/live/mbta';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 export default function App() {
@@ -39,6 +39,18 @@ export default function App() {
   const live = useLiveTrains();
   const [trainId, setTrainId] = useState(null);
   const train = trainId ? live.trains.find((t) => t.id === trainId) : null;
+
+  // The train you're waiting for at your stop: the arrival you tapped on the NEXT TRAINS
+  // board, or else the soonest one that's on the map. Only that train pulses.
+  const arrivals = useArrivals(selectedId);
+  const [watchId, setWatchId] = useState(null);
+  useEffect(() => setWatchId(null), [selectedId]);
+  const watched = useMemo(() => {
+    const onMap = new Set(live.trains.map((t) => t.id));
+    const list = arrivals.arrivals.filter((a) => a.vehicleId && onMap.has(a.vehicleId));
+    return list.find((a) => a.id === watchId) ?? list[0] ?? null;
+  }, [arrivals.arrivals, live.trains, watchId]);
+  const waitingFor = watched ? { trainId: watched.vehicleId, minutes: watched.minutes } : null;
   const menuBottom = selected || landmark || train ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
@@ -111,6 +123,7 @@ export default function App() {
           discovered={discovered}
           onLandmarkPress={openLandmark}
           liveTrains={live.trains}
+          waitingFor={waitingFor}
           selectedTrainId={trainId}
           onTrainPress={(id) => {
             setLandmarkId(null);
@@ -159,6 +172,9 @@ export default function App() {
             station={selected}
             previousId={trip.previousId}
             activeSignId={activeSignId}
+            arrivals={arrivals}
+            watchedId={watched?.id}
+            onWatch={setWatchId}
             onSelect={rideTo}
             onClose={() => placeAt(null)}
             onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}

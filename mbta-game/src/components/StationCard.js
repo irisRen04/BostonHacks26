@@ -140,7 +140,7 @@ function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
-export default function StationCard({ station, previousId, activeSignId, onSelect, onClose, onLayout }) {
+export default function StationCard({ station, previousId, activeSignId, arrivals, watchedId, onWatch, onSelect, onClose, onLayout }) {
   return (
     <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
@@ -169,7 +169,7 @@ export default function StationCard({ station, previousId, activeSignId, onSelec
         ))}
       </View>
 
-      <NextTrains stationId={station.id} />
+      <NextTrains arrivals={arrivals.arrivals} status={arrivals.status} watchedId={watchedId} onWatch={onWatch} />
 
       {isJunction(station.id) ? (
         <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />

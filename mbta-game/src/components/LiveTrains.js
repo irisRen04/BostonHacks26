@@ -7,7 +7,8 @@ import { FONT_TITLE, PALETTE, TRAIN_COLORS, TRAIN_SPRITE, squaresToPath, stampSp
 const FRAME_MS = 50; // animation frame (20 fps): smooth enough for the pulse
 const GLIDE_MS = POLL_MS * 0.9; // reach the new position just before the next update
 const PULSE_MS = 1600; // one full grow-and-shrink
-const PULSE_SIZE = 0.08; // how much a moving train grows at the top of the pulse
+const PULSE_SIZE = 0.12; // how much your train grows at the top of the pulse
+const YOURS_SIZE = 1.3; // your train is drawn a bit bigger than the rest
 
 /** Train sprite drawn around (0, 0) pointing right, so each train only needs translate + rotate. */
 function useTrainParts(px) {
@@ -34,18 +35,15 @@ function pulse(ms) {
   return (1 - Math.cos((2 * Math.PI * (ms % PULSE_MS)) / PULSE_MS)) / 2;
 }
 
-// a stable offset per train so moving trains don't all pulse in sync
-const phaseOf = (id) => ([...id].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 1000) * (PULSE_MS / 1000);
-
-const isMoving = (t) => t.status !== 'STOPPED_AT' && Math.hypot(t.to.x - t.from.x, t.to.y - t.from.y) > 3;
 
 /**
  * Live trains on the map, seen from above. Each train points along its heading with
- * a headlight beam shining ahead, sits on a soft shadow, and gently grows and shrinks
- * while it's moving (stopped trains stay still). Positions are State Plane meters;
+ * a headlight beam shining ahead and sits on a soft shadow. The train you're waiting
+ * for (waitingFor = { trainId, minutes }) is bigger, outlined in gold, tagged, and
+ * gently grows and shrinks; every other train stays still. Positions are State Plane meters;
  * (OX, OY, scale) is the map's world->screen transform. Writes tap targets into hitsRef.
  */
-export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, showTags, hitsRef }) {
+export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingFor, showTags, hitsRef }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!trains.length) return undefined;
@@ -67,9 +65,10 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
     const sx = Math.round(x * scale + OX);
     const sy = Math.round(-y * scale + OY);
     if (sx < -w * 2 || sy < -w * 2 || sx > width + w * 2 || sy > height + w * 2) continue;
-    const moving = isMoving(t);
-    placed.push({ t, sx, sy, angle: headingOf(t), beat: moving ? pulse(now + phaseOf(t.id)) : 0, moving });
+    const mine = t.id === waitingFor?.trainId;
+    placed.push({ t, sx, sy, angle: headingOf(t), mine, beat: mine ? pulse(now) : 0 });
   }
+  placed.sort((a, b) => a.mine - b.mine); // your train draws on top
   // rotated trains: a square around the centre is a forgiving tap target
   const reach = w / 2 + 4;
   hitsRef.current = placed.map(({ t, sx, sy }) => ({ id: t.id, x0: sx - reach, x1: sx + reach, y0: sy - reach, y1: sy + reach }));
@@ -95,22 +94,32 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
         </G>
       ))}
 
-      {placed.map(({ t, sx, sy, angle, beat, moving }) => {
-        const size = 1 + PULSE_SIZE * beat;
-        // the headlight beam: a cone from the front of the car, brightening as the train grows
+      {placed.map(({ t, sx, sy, angle, beat, mine }) => {
+        const size = mine ? YOURS_SIZE + PULSE_SIZE * beat : 1;
+        const label = mine ? `YOUR TRAIN · ${waitingFor.minutes <= 0 ? 'NOW' : `${waitingFor.minutes} MIN`}` : null;
+        const labelW = label ? label.length * 6 + 8 : 0;
+        // the headlight beam: a cone from the front of the car (yours brightens as it grows)
         const beam = `M${w / 2 - px} ${-h * 0.3}L${w / 2 + beamLength} ${-h * 1.3}L${w / 2 + beamLength} ${h * 1.3}L${w / 2 - px} ${h * 0.3}Z`;
         return (
           <G key={t.id} transform={`translate(${sx} ${sy})`}>
             <G transform={`rotate(${angle}) scale(${size})`}>
-              <Path d={beam} fill="url(#trainBeam)" opacity={moving ? 0.55 + 0.45 * beat : 0.4} />
-              {t.id === selectedId && (
+              <Path d={beam} fill="url(#trainBeam)" opacity={mine ? 0.6 + 0.4 * beat : 0.45} />
+              {(mine || t.id === selectedId) && (
                 <Rect x={-w / 2 - 4} y={-h / 2 - 4} width={w + 8} height={h + 8} fill="none" stroke={PALETTE.gold} strokeWidth={3} />
               )}
               {parts.map(({ color, d }) => (
                 <Path key={color} d={d} fill={color} />
               ))}
             </G>
-            {showTags && (
+            {mine && (
+              <G>
+                <Rect x={-labelW / 2} y={-reach * YOURS_SIZE - 16} width={labelW} height={13} fill={PALETTE.gold} />
+                <SvgText x={0} y={-reach * YOURS_SIZE - 6} fontSize={6} fontFamily={FONT_TITLE} fill={PALETTE.ink} textAnchor="middle">
+                  {label}
+                </SvgText>
+              </G>
+            )}
+            {showTags && !mine && (
               <G>
                 <Rect x={-6} y={-reach - 12} width={12} height={12} fill={PALETTE.ink} />
                 <SvgText x={0.5} y={-reach - 2} fontSize={8} fontFamily={FONT_TITLE} fill={PALETTE.gold} textAnchor="middle">

@@ -123,6 +123,7 @@ const TransitMap = forwardRef(function TransitMap(
     discovered,
     onLandmarkPress,
     liveTrains = [],
+    waitingFor,
     selectedTrainId,
     onTrainPress,
   },
@@ -542,6 +543,7 @@ const TransitMap = forwardRef(function TransitMap(
               width={size.width}
               height={size.height}
               selectedId={selectedTrainId}
+              waitingFor={waitingFor}
               showTags={showAllLabels}
               hitsRef={trainHitsRef}
             />

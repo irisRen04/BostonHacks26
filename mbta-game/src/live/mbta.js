@@ -89,7 +89,8 @@ export function useLiveTrains(enabled = true) {
 }
 
 /**
- * Next arrivals at one of our stations: [{ id, branch, headsign, minutes }], soonest first.
+ * Next arrivals at one of our stations: [{ id, branch, headsign, minutes, vehicleId }], soonest first.
+ * vehicleId matches a train id from useLiveTrains (null if no train is assigned yet).
  * Refreshes every ARRIVALS_MS while stationId is set.
  */
 export function useArrivals(stationId) {
@@ -119,6 +120,7 @@ export function useArrivals(stationId) {
               branch: branchOf(p.relationships.route?.data?.id),
               headsign: inc[`trip:${p.relationships.trip?.data?.id}`]?.headsign ?? '',
               minutes: when ? Math.round((new Date(when).getTime() - now) / 60000) : null,
+              vehicleId: p.relationships.vehicle?.data?.id ?? null,
             };
           })
           .filter((a) => a.minutes != null && a.minutes >= 0) // skipped trips have no time
