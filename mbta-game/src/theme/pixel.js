@@ -79,18 +79,65 @@ export const TRANSFER_SPRITE = [
 export const STOP_SPRITE_SMALL = ['.KKK.', 'KWWWK', 'KWGWK', 'KWWWK', '.KKK.'];
 export const TRANSFER_SPRITE_SMALL = ['.KKK.', 'KYYYK', 'KYGYK', 'KYYYK', '.KKK.'];
 
-/** A live Green Line train: side view of a trolley with its pole and headlights. */
-export const TROLLEY_SPRITE = [
-  '....KKK....',
-  '.....K.....',
-  'KKKKKKKKKKK',
-  'KLLLLLLLLLK',
-  'KGWWGWGWWGK',
-  'KGGGGGGGGGK',
-  'KYGGGGGGGYK',
-  'KKKKKKKKKKK',
-  '.KSK...KSK.',
-];
+/**
+ * A live Green Line train in an HD-2D spirit: a two-section articulated light-rail
+ * car (side view, front on the RIGHT) with a pantograph, lit roof, glass
+ * reflections, doors, a dark skirt and wheel trucks. Built from a layout so every
+ * row is exactly the same width.
+ */
+function buildTrain() {
+  const SECTION = 11; // body columns per car section
+  const W = 1 + SECTION + 2 + SECTION + 1; // outline + rear car + bellows + front car + outline
+  const rows = [];
+  const row = (fn) => rows.push(Array.from({ length: W }, (_, x) => fn(x)).join(''));
+  const frontStart = 1 + SECTION + 2;
+  const inBellows = (x) => x === 1 + SECTION || x === 2 + SECTION;
+  // within one section: windows with a glass glint, then a door next to the bellows
+  const sec = (x) => (x < frontStart ? x - 1 : x - frontStart);
+  const cell = (x, kind) => {
+    if (x === 0 || x === W - 1) return 'K';
+    if (inBellows(x)) return 'K';
+    const i = x < frontStart ? SECTION - 1 - sec(x) : sec(x); // mirror so doors sit by the bellows
+    return kind(i);
+  };
+  // pantograph (diamond frame) over the front car
+  const panto = frontStart + 4;
+  row((x) => (x >= panto - 2 && x <= panto + 2 ? 'P' : '.'));
+  row((x) => (x === panto - 1 || x === panto + 1 ? 'P' : '.'));
+  row((x) => (x === panto ? 'P' : '.'));
+  row((x) => (x === 0 || x === W - 1 ? '.' : 'K')); // roof outline, rounded corners
+  row((x) => cell(x, () => 'L')); // rim-lit roof
+  row((x) => cell(x, (i) => (i === 0 ? 'D' : i % 4 === 1 ? 'G' : i % 4 === 2 ? 'R' : 'W')));
+  row((x) => cell(x, (i) => (i === 0 ? 'D' : i % 4 === 1 ? 'G' : 'W')));
+  row((x) => cell(x, (i) => (i === 0 ? 'D' : 'G')));
+  row((x) => cell(x, (i) => (i === 0 ? 'D' : 'H'))); // shaded lower body
+  row((x) => (x === W - 2 ? 'Y' : x === 1 ? 'r' : cell(x, () => 'B'))); // skirt, headlight front, tail light back
+  row((x) => (x === 0 || x === W - 1 ? '.' : 'K'));
+  // wheel trucks under each section
+  const trucks = [3, 4, 9, 10].flatMap((c) => [c, frontStart + c - 1]);
+  row((x) => (trucks.includes(x) ? 'w' : '.'));
+  return rows;
+}
+
+export const TRAIN_SPRITE = buildTrain();
+
+export const TRAIN_COLORS = {
+  K: PALETTE.ink,
+  P: '#8b93a8', // pantograph
+  L: '#7fe0a0', // roof catching the light
+  G: '#1f9d55', // Green Line body
+  H: '#178048', // body in shade
+  W: '#2b3a55', // window glass
+  R: '#bfe6ff', // glint on the glass
+  D: '#0f6b3a', // doors
+  B: '#0b4d2a', // skirt
+  Y: '#fff3b0', // headlight
+  r: '#ff5d5d', // tail light
+  w: '#2a2d3a', // wheels
+};
+
+/** Where the headlight is, in sprite pixels from the sprite's top-left. */
+export const TRAIN_HEADLIGHT = { col: TRAIN_SPRITE[0].length - 2, row: TRAIN_SPRITE.findIndex((r) => r.includes('Y')) };
 
 /**
  * Add a sprite to per-colour cell buckets. (cx, cy) is the sprite's center in
