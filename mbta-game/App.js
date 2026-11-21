@@ -10,8 +10,16 @@ import GameMenu from './src/components/GameMenu';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
 import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
-import { isJunction, routeOptions, stationsById } from './src/data/greenLine';
+import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
+import { useRankedStops } from './src/hooks/useRankedStops';
+import { useWalkingInfo } from './src/hooks/useWalkingInfo';
+import { formatDistance } from './src/services/proximity';
+import { rideBetween } from './src/services/ride';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
+
+// "Park Street" vs "park st." shouldn't break name matching
+const normName = (s) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const stationByName = Object.fromEntries(stations.map((s) => [normName(s.name), s]));
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
@@ -43,6 +51,62 @@ export default function App() {
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
+
+  // ---- Nearest stop to the user's real location ----
+  const { ranked, coords } = useRankedStops();
+
+  // Ranked stops that also exist on the map, closest first
+  const rankedOnMap = useMemo(
+    () =>
+      ranked
+        .map((r) => ({ ...r, station: stationByName[normName(r.name)] }))
+        .filter((r) => r.station),
+    [ranked],
+  );
+  const nearest = rankedOnMap[0] ?? null;
+
+  // Spawn the avatar at the nearest stop, once
+  const hasSpawned = useRef(false);
+  useEffect(() => {
+    if (hasSpawned.current || !nearest) return;
+    hasSpawned.current = true;
+    placeAt(nearest.station.id);
+  }, [nearest, placeAt]);
+
+  // Real walking routes for the 3 closest stops, plus the stop the avatar is on
+  const selectedRow = selected ? rankedOnMap.find((r) => r.station.id === selected.id) : null;
+  const walkTargets = useMemo(() => {
+    const rows = rankedOnMap.slice(0, 3);
+    if (selectedRow && !rows.includes(selectedRow)) rows.push(selectedRow);
+    return rows.map((r) => ({ id: r.station.id, lat: r.lat, lng: r.lng }));
+  }, [rankedOnMap, selectedRow]);
+  const walking = useWalkingInfo(coords, walkTargets);
+
+  // Info for whichever stop the avatar is on (falls back to the nearest)
+  const row = selectedRow ?? nearest;
+  const route = row ? walking[row.station.id] : null;
+  const info = row
+    ? {
+        station: row.station,
+        straightMeters: row.meters,
+        meters: route ? route.meters : row.meters * 1.3,
+        walkMinutes: route ? route.minutes : row.walkMinutes,
+        exact: !!route,
+      }
+    : null;
+  const isNearest = !!(info && nearest && info.station.id === nearest.station.id);
+
+  // Train leg: from the stop you'd board at (nearest) to the stop the avatar is on
+  const coordsById = useMemo(
+    () => Object.fromEntries(rankedOnMap.map((r) => [r.station.id, { lat: r.lat, lng: r.lng }])),
+    [rankedOnMap],
+  );
+  const ride =
+    info && nearest && !isNearest
+      ? rideBetween(nearest.station.id, info.station.id, coordsById)
+      : null;
+  const walkToBoard = nearest ? walking[nearest.station.id]?.minutes ?? nearest.walkMinutes : 0;
+  const totalMin = ride ? walkToBoard + ride.minutes : null;
 
   // One sign per way out of a junction; the way you came in is the BACK sign.
   const signs = useMemo(() => {
@@ -83,6 +147,31 @@ export default function App() {
           </View>
           <Text style={styles.title}>GREEN LINE</Text>
         </View>
+
+        {info && (
+          <View style={styles.distBadge} pointerEvents="none">
+            <Text style={styles.distLabel}>{isNearest ? 'NEAREST STOP' : 'SELECTED STOP'}</Text>
+            <Text style={styles.distName}>{info.station.name.toUpperCase()}</Text>
+            {isNearest ? (
+              <Text style={styles.distSub}>
+                {info.exact ? '' : '~'}
+                {formatDistance(info.meters)} walk · {info.walkMinutes} min
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.distSub}>
+                  🚶 {formatDistance(info.straightMeters)} straight-line away
+                </Text>
+                {ride ? (
+                  <Text style={styles.distSub}>
+                    🚆 {ride.stops} stops · {formatDistance(ride.meters)} · ~{ride.minutes} min
+                  </Text>
+                ) : null}
+                {totalMin ? <Text style={styles.distSub}>Total ~{totalMin} min</Text> : null}
+              </>
+            )}
+          </View>
+        )}
 
         <View style={styles.zoom}>
           <ZoomButton label="+" onPress={() => mapRef.current?.zoomIn()} />
@@ -167,6 +256,20 @@ const styles = StyleSheet.create({
     paddingLeft: 6,
     paddingRight: 12,
   },
+  distBadge: {
+    position: 'absolute',
+    top: isWeb ? 64 : 104,
+    left: 14,
+    backgroundColor: PALETTE.night,
+    borderWidth: 3,
+    borderColor: PALETTE.panelEdge,
+    boxShadow: `4px 4px 0px ${PALETTE.ink}`,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  distLabel: { fontFamily: FONT_TITLE, fontSize: 7, color: PALETTE.gold },
+  distName: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white, marginTop: 4 },
+  distSub: { fontFamily: FONT_BODY, fontSize: 17, color: '#b7c0d8' },
   lineBadge: {
     backgroundColor: PALETTE.green,
     borderWidth: 2,

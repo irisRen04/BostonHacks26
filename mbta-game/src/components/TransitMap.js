@@ -26,9 +26,6 @@ const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
 
-// "Park Street" and "park st." style differences shouldn't break matching
-const normName = (s) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
 // Chunkier track and bigger stop sprites as you zoom in.
 function zoomStyle(scale) {
   if (scale < 0.05) return { track: 1, sprite: STOP_SPRITE_SMALL, transfer: TRANSFER_SPRITE_SMALL, s: 2 };
@@ -67,14 +64,13 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * as the background; Green Line stops are drawn on top as target icons.
  * Map coordinates are State Plane meters (y = north), projected to screen as
  *   sx = (x - cx) * scale + width / 2,  sy = (cy - y) * scale + height / 2.
- *
- * Props:
- *   selectedId        - station the user tapped (highlighted nameplate)
- *   onSelectStation   - called with a station id (or null) when the map is tapped
- *   playerStationName - name of the nearest stop to the user; the trolley sits here
+ */
+/**
+ * signs / activeSignId / onSignPress: at a junction, the signposts to draw around the
+ * current stop (see JunctionSigns). Tapping a sign calls onSignPress(neighbourId).
  */
 const TransitMap = forwardRef(function TransitMap(
-  { selectedId, onSelectStation, playerStationName },
+  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress },
   ref,
 ) {
   const [size, setSize] = useState(null);
@@ -309,13 +305,16 @@ const TransitMap = forwardRef(function TransitMap(
 
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
+  const current = projected?.stops.find((p) => p.station.id === selectedId);
 
-  // The rider sits at the stop nearest the user (matched by name)
-  const playerKey = normName(playerStationName);
-  const isPlayerStation = (station) => playerKey !== '' && normName(station.name) === playerKey;
-  const playerStop =
-  projected?.stops.find((p) => isPlayerStation(p.station)) ??
-  projected?.stops.find((p) => p.station.id === selectedId);
+  // Junction signposts, laid out around the current stop toward each neighbour.
+  const placedSigns = useMemo(() => {
+    if (!projected || !current || !signs?.length) return [];
+    const positions = Object.fromEntries(signs.map((sg) => [sg.id, projected.stationToScreen(stationsById[sg.id])]));
+    return layoutSigns(signs, current, positions);
+  }, [projected, current, signs]);
+  placedSignsRef.current = placedSigns;
+  const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
 
   return (
     <View ref={containerRef} style={styles.container} onLayout={onLayout} {...responder.panHandlers}>
@@ -359,12 +358,7 @@ const TransitMap = forwardRef(function TransitMap(
           {projected.stops
             .filter(
               ({ station }) =>
-                showAllLabels ||
-                station.terminus ||
-                station.transfers.length > 0 ||
-                station.id === selectedId ||
-                isPlayerStation(station) ||
-                station.name === 'Kenmore',
+                showAllLabels || station.terminus || station.transfers.length > 0 || station.id === selectedId || station.name === 'Kenmore',
             )
             // while junction signs are up, clear nameplates around the junction so the signs read clearly
             .filter(({ station, x, y }) => {
@@ -386,8 +380,21 @@ const TransitMap = forwardRef(function TransitMap(
               />
             ))}
 
-          {/* the rider, at the nearest stop to the user */}
-          {playerStop && <PlayerTrolley x={playerStop.x} y={playerStop.y - projected.spriteHalf - 26} />}
+          {/* the rider */}
+          {current && (
+            <PlayerAvatar avatar={avatar} x={current.x} y={current.y - projected.spriteHalf - PLAYER_HEIGHT / 2 - 2} />
+          )}
+
+          {/* junction signposts */}
+          {placedSigns.length > 0 && (
+            <JunctionSigns
+              placed={placedSigns}
+              center={current}
+              spriteHalf={projected.spriteHalf}
+              activeId={activeSignId}
+              target={signTarget}
+            />
+          )}
         </Svg>
       )}
     </View>
