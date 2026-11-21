@@ -4,6 +4,23 @@ import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 import { PixelButton, ui } from './ui';
 
+/**
+ * Arrow pointing the way the next stop lies on the map (snapped to 8 directions),
+ * so it always matches what you see on screen.
+ */
+function MapArrow({ fromId, toId }) {
+  const a = stationsById[fromId];
+  const b = stationsById[toId];
+  // map y grows north, screen rotation is clockwise from "pointing right"
+  const deg = (Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI;
+  const snapped = Math.round(deg / 45) * 45;
+  return (
+    <View style={styles.arrowTile}>
+      <Text style={[styles.arrowGlyph, { transform: [{ rotate: `${snapped}deg` }] }]}>➜</Text>
+    </View>
+  );
+}
+
 function BranchTiles({ branches, small }) {
   return (
     <View style={styles.optionBranches}>
@@ -17,9 +34,10 @@ function BranchTiles({ branches, small }) {
 }
 
 /** A way to ride from an ordinary stop: the next stop and where those trains end up. */
-function NextStopButton({ option, onSelect }) {
+function NextStopButton({ fromId, option, onSelect }) {
   return (
     <PixelButton onPress={() => onSelect(option.id)} style={styles.next}>
+      <MapArrow fromId={fromId} toId={option.id} />
       <BranchTiles branches={option.branches} small />
       <View style={{ flex: 1 }}>
         <Text style={styles.nextName} numberOfLines={1}>
@@ -43,6 +61,7 @@ function JunctionBanner({ fromId, option, onSelect }) {
   return (
     <PixelButton onPress={() => onSelect(option.id)} style={styles.banner}>
       <View style={styles.bannerHead}>
+        <MapArrow fromId={fromId} toId={option.id} />
         <Text style={styles.bannerName} numberOfLines={1}>
           {stationsById[option.id].name.toUpperCase()}
         </Text>
@@ -73,7 +92,7 @@ function NextStops({ station, onSelect }) {
         isJunction(o.id) ? (
           <JunctionBanner key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
         ) : (
-          <NextStopButton key={o.id} option={o} onSelect={onSelect} />
+          <NextStopButton key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
         ),
       )}
       {options.length === 1 && <Text style={styles.hint}>End of the line. The only way is back.</Text>}
@@ -201,6 +220,16 @@ const styles = StyleSheet.create({
   branchTileTextSmall: { fontSize: 8 },
 
   nextList: { marginTop: 12, gap: 8 },
+  arrowTile: {
+    width: 24,
+    height: 24,
+    backgroundColor: PALETTE.night,
+    borderWidth: 2,
+    borderColor: PALETTE.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowGlyph: { fontSize: 14, lineHeight: 16, color: PALETTE.gold, fontWeight: '900' },
   next: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 6 },
   nextName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
   toward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
