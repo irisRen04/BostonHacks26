@@ -13,12 +13,15 @@ import {
   TRANSFER_SPRITE,
   TRANSFER_SPRITE_SMALL,
   cellsToPath,
+  fillRings,
   rasterize,
   squaresToPath,
   stampSprite,
   topEdge,
 } from '../theme/pixel';
 import { landmarks } from '../data/landmarks';
+import parks from '../data/parks.json';
+import water from '../data/water.json';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
 import { AnimatedLandmarkPaths } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
@@ -36,6 +39,36 @@ function zoomStyle(scale) {
   if (scale < 0.5) return { track: 3, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 3 };
   return { track: 4, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 4 };
 }
+
+// Water texture tile, in map pixels: short light wave dashes and a deep speck
+const WAVE_TILE = 8;
+const WAVES = [
+  [1, 1, PALETTE.waterLight],
+  [2, 1, PALETTE.waterLight],
+  [5, 4, PALETTE.waterLight],
+  [6, 4, PALETTE.waterLight],
+  [3, 6, PALETTE.waterDeep],
+];
+
+// Park texture tile: two little pixel trees (dark crown, one light pixel)
+const PARK_TILE = 10;
+const TREES = [
+  [2, 2, PALETTE.tree],
+  [3, 2, PALETTE.tree],
+  [2, 3, PALETTE.tree],
+  [3, 3, PALETTE.tree],
+  [2, 2, PALETTE.treeLight],
+  [7, 6, PALETTE.tree],
+  [8, 6, PALETTE.tree],
+  [7, 7, PALETTE.tree],
+  [8, 7, PALETTE.tree],
+  [7, 6, PALETTE.treeLight],
+];
+
+// Every water / park ring, flattened once (outer edges and holes; filled even-odd)
+const WATER_RINGS = water.bodies.flatMap((b) => b.rings);
+const PARK_RINGS = parks.bodies.flatMap((b) => b.rings);
+const closeRings = (rings) => rings.map((r) => [...r, r[0]]);
 
 // Ground texture tile, in map pixels: [x, y, colour]
 const GROUND_TILE = 8;
@@ -274,6 +307,21 @@ const TransitMap = forwardRef(function TransitMap(
     const toScreen = (pts) => pts.map(([x, y]) => [x * scale + OX, -y * scale + OY]);
     const style = zoomStyle(scale);
 
+    // parks: a hedge traced around each park, then the treed lawn filled on top
+    const parkScreen = PARK_RINGS.map((ring) => toScreen(ring));
+    const parkPaths = {
+      edge: style.track >= 2 ? cellsToPath(rasterize(closeRings(parkScreen), 2, gox, goy, width, height), gox, goy) : '',
+      fill: fillRings(parkScreen, gox, goy, width, height),
+    };
+
+    // water: a sandy bank traced along every shore, then the water filled on top
+    const waterScreen = WATER_RINGS.map((ring) => toScreen(ring));
+    const waterPaths = {
+      // banks only once zoomed in a bit: zoomed all the way out they'd be wider than thin rivers
+      shore: style.track >= 2 ? cellsToPath(rasterize(closeRings(waterScreen), 2, gox, goy, width, height), gox, goy) : '',
+      fill: fillRings(waterScreen, gox, goy, width, height),
+    };
+
     // other lines: flat, muted, one size thinner
     const others = {};
     for (const t of tracks) {
@@ -327,7 +375,7 @@ const TransitMap = forwardRef(function TransitMap(
             .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
 
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
-    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks };
+    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
@@ -362,8 +410,42 @@ const TransitMap = forwardRef(function TransitMap(
                 <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
               ))}
             </Pattern>
+            <Pattern
+              id="parkland"
+              patternUnits="userSpaceOnUse"
+              x={projected.gox}
+              y={projected.goy}
+              width={PARK_TILE * PX}
+              height={PARK_TILE * PX}
+            >
+              <Rect width={PARK_TILE * PX} height={PARK_TILE * PX} fill={PALETTE.park} />
+              {TREES.map(([x, y, c], i) => (
+                <Rect key={i} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
+              ))}
+            </Pattern>
+            <Pattern
+              id="waves"
+              patternUnits="userSpaceOnUse"
+              x={projected.gox}
+              y={projected.goy}
+              width={WAVE_TILE * PX}
+              height={WAVE_TILE * PX}
+            >
+              <Rect width={WAVE_TILE * PX} height={WAVE_TILE * PX} fill={PALETTE.water} />
+              {WAVES.map(([x, y, c]) => (
+                <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
+              ))}
+            </Pattern>
           </Defs>
           <Rect width={size.width} height={size.height} fill="url(#ground)" />
+
+          {/* parks */}
+          {projected.parkPaths.edge ? <Path d={projected.parkPaths.edge} fill={PALETTE.parkEdge} /> : null}
+          {projected.parkPaths.fill ? <Path d={projected.parkPaths.fill} fill="url(#parkland)" /> : null}
+
+          {/* rivers, ponds and reservoirs */}
+          {projected.waterPaths.shore ? <Path d={projected.waterPaths.shore} fill={PALETTE.shore} /> : null}
+          {projected.waterPaths.fill ? <Path d={projected.waterPaths.fill} fill="url(#waves)" /> : null}
 
           {/* the rest of the MBTA, muted */}
           <G opacity={0.45}>
