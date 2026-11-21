@@ -135,6 +135,7 @@ export default function App() {
           onSignPress={pressSign}
           discovered={discovered}
           onLandmarkPress={openLandmark}
+          openLandmarkId={landmarkId}
           liveTrains={visibleTrains}
           waitingFor={waitingFor}
           selectedTrainId={trainId}

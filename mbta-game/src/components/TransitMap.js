@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, StyleSheet, View } from 'react-native';
-import Svg, { Defs, G, Path, Pattern, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Defs, Ellipse, G, Path, Pattern, RadialGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
 
 import { greenBounds, stations, stationsById, tracks } from '../data/greenLine';
 import {
@@ -129,6 +129,7 @@ const TransitMap = forwardRef(function TransitMap(
     onSignPress,
     discovered,
     onLandmarkPress,
+    openLandmarkId,
     liveTrains = [],
     waitingFor,
     selectedTrainId,
@@ -403,24 +404,25 @@ const TransitMap = forwardRef(function TransitMap(
 
     // landmarks, bottom-centre on their real location, only when zoomed in
     const look = landmarkLook(scale);
-    const placedLandmarks =
-      scale < LANDMARK_SCALE
-        ? []
-        : landmarks
+    // the landmark whose card is open is always shown, as its full building at the largest size
+    const placedLandmarks = landmarks
+            .filter((lm) => scale >= LANDMARK_SCALE || lm.id === openLandmarkId)
             .map((lm) => {
               const x = Math.round(lm.x * scale + OX);
               const y = Math.round(-lm.y * scale + OY);
-              const art = look.pin ? LANDMARK_PIN : lm.sprite;
-              const w = art[0].length * look.px;
-              const h = art.length * look.px;
-              return { landmark: lm, x, y, w, h, px: look.px, pin: look.pin, // the nameplate to the right of the sprite is tappable too
+              const open = lm.id === openLandmarkId;
+              const here = open ? { pin: false, px: 3 } : look;
+              const art = here.pin ? LANDMARK_PIN : lm.sprite;
+              const w = art[0].length * here.px;
+              const h = art.length * here.px;
+              return { landmark: lm, x, y, w, h, px: here.px, pin: here.pin, open, // the nameplate to the right of the sprite is tappable too
               hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 } };
             })
             .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
 
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
     return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks, OX, OY };
-  }, [camera, size]);
+  }, [camera, size, openLandmarkId]);
 
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
@@ -524,6 +526,10 @@ const TransitMap = forwardRef(function TransitMap(
                 <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
               ))}
             </Pattern>
+            <RadialGradient id="landmarkGlow" cx="50%" cy="50%" r="50%">
+              <Stop offset="0%" stopColor={PALETTE.gold} stopOpacity={0.7} />
+              <Stop offset="100%" stopColor={PALETTE.gold} stopOpacity={0} />
+            </RadialGradient>
             <Pattern
               id="parkland"
               patternUnits="userSpaceOnUse"
@@ -575,7 +581,7 @@ const TransitMap = forwardRef(function TransitMap(
           {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
 
           {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
-          {projected.placedLandmarks.map(({ landmark, x, y, px, pin }) => {
+          {projected.placedLandmarks.filter((p) => !p.open).map(({ landmark, x, y, px, pin }) => {
             const known = !!discovered?.[landmark.id];
             return pin ? (
               <LandmarkPin key={landmark.id} x={x} y={y} px={px} discovered={known} />
@@ -606,6 +612,18 @@ const TransitMap = forwardRef(function TransitMap(
               hitsRef={trainHitsRef}
             />
           )}
+
+          {/* the open landmark, big and on top, with a soft gold glow at its base */}
+          {projected.placedLandmarks
+            .filter((p) => p.open)
+            .map(({ landmark, x, y, w, px }) => (
+              <G key={`open-${landmark.id}`}>
+                <Ellipse cx={x} cy={y} rx={w * 0.75} ry={px * 5} fill="url(#landmarkGlow)" />
+                <G opacity={discovered?.[landmark.id] ? 1 : 0.85}>
+                  <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
+                </G>
+              </G>
+            ))}
 
           {/* nameplates for stops and landmarks, overlapping ones left out (see placedLabels) */}
           {placedLabels.map((l) => (
