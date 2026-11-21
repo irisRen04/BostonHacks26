@@ -86,8 +86,8 @@ function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingF
       const a = (angle * Math.PI) / 180;
       const ux = Math.cos(a);
       const uy = Math.sin(a);
-      const hl = w / 2; // half length
-      const hw = h / 2; // half width
+      const hl = 7; // a small mark when zoomed out: 14 x 5 points
+      const hw = 2.5;
       const c = (l, s2) => `${(sx + ux * l - uy * s2).toFixed(1)} ${(sy + uy * l + ux * s2).toFixed(1)}`;
       simplePath += `M${c(-hl, -hw)}L${c(hl, -hw)}L${c(hl, hw)}L${c(-hl, hw)}Z`;
     }

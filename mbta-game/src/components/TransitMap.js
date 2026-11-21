@@ -31,6 +31,8 @@ import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
+const TOP_INSET = 72; // the header and zoom buttons cover the top of the map
+const HEAD_ROOM = 56; // room above a focused stop for the rider's head and its label
 const SETTLE_MS = 180; // redraw the background sharp this long after a zoom stops
 const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
@@ -105,6 +107,13 @@ function fitCamera(width, height) {
     cx: (greenBounds.minX + greenBounds.maxX) / 2,
     cy: (greenBounds.minY + greenBounds.maxY) / 2,
   };
+}
+
+/** Middle of the map area left between the header and a card covering `bottomInset` points. */
+function visibleCentreY(height, bottomInset) {
+  const top = TOP_INSET + HEAD_ROOM;
+  const bottom = Math.max(top + 40, height - bottomInset);
+  return (top + bottom) / 2;
 }
 
 const distance = (a, b) => Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
@@ -217,13 +226,27 @@ const TransitMap = forwardRef(function TransitMap(
     zoomIn: () => sizeRef.current && zoomAt(1.6, sizeRef.current.width / 2, sizeRef.current.height / 2),
     zoomOut: () => sizeRef.current && zoomAt(1 / 1.6, sizeRef.current.width / 2, sizeRef.current.height / 2),
     reset: () => sizeRef.current && applyCamera(fitCamera(sizeRef.current.width, sizeRef.current.height)),
-    focusStation: (station, minScale = 0.25) => {
+    // Centre a stop (or landmark) in the part of the map that isn't covered by the
+    // header at the top or the card at the bottom (bottomInset, in screen points).
+    focusStation: (station, minScale = 0.25, bottomInset = 0) => {
       const cam = cameraRef.current;
-      if (!cam) return;
+      const sz = sizeRef.current;
+      if (!cam || !sz) return;
       const scale = Math.max(cam.scale, minScale);
-      // sit the stop in the upper part of the screen so the info card doesn't cover it
-      const lift = (sizeRef.current?.height ?? 0) * 0.18;
-      applyCamera({ scale, cx: station.x, cy: station.y - lift / scale });
+      const targetY = visibleCentreY(sz.height, bottomInset);
+      applyCamera({ scale, cx: station.x, cy: station.y + (targetY - sz.height / 2) / scale });
+    },
+    // Only move the map if the stop would be hidden behind the card or the header.
+    keepVisible: (station, bottomInset = 0) => {
+      const cam = cameraRef.current;
+      const sz = sizeRef.current;
+      if (!cam || !sz) return;
+      const sy = (cam.cy - station.y) * cam.scale + sz.height / 2;
+      const sx = (station.x - cam.cx) * cam.scale + sz.width / 2;
+      const hidden = sy > sz.height - bottomInset - 24 || sy < TOP_INSET + HEAD_ROOM || sx < 16 || sx > sz.width - 16;
+      if (!hidden) return;
+      const targetY = visibleCentreY(sz.height, bottomInset);
+      applyCamera({ scale: cam.scale, cx: station.x, cy: station.y + (targetY - sz.height / 2) / cam.scale });
     },
   }));
 
