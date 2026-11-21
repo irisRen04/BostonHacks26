@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Circle, Defs, Ellipse, G, Path, RadialGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
+import { Defs, Ellipse, G, LinearGradient, Path, RadialGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
 
 import { POLL_MS } from '../live/mbta';
-import { FONT_TITLE, PALETTE, TRAIN_COLORS, TRAIN_HEADLIGHT, TRAIN_SPRITE, squaresToPath, stampSprite } from '../theme/pixel';
+import { FONT_TITLE, PALETTE, TRAIN_COLORS, TRAIN_SPRITE, squaresToPath, stampSprite } from '../theme/pixel';
 
-const FRAME_MS = 100; // how often trains are moved along between position updates
+const FRAME_MS = 50; // animation frame (20 fps): smooth enough for the heartbeat
 const GLIDE_MS = POLL_MS * 0.9; // reach the new position just before the next update
+const BEAT_MS = 1200; // one heartbeat (lub-dub + rest)
+const BEAT_SIZE = 0.1; // how much a moving train swells on a beat
 
-/** Train sprite drawn around (0, 0), so each train only needs a translate (and a mirror). */
+/** Train sprite drawn around (0, 0) pointing right, so each train only needs translate + rotate. */
 function useTrainParts(px) {
   return useMemo(() => {
     const buckets = {};
@@ -16,21 +18,34 @@ function useTrainParts(px) {
   }, [px]);
 }
 
-/** Which way a train faces: the way it's moving, or else its compass bearing (0 = north, 90 = east). */
-function facesRight(t) {
+/**
+ * Screen angle a train points at, in degrees clockwise from "right": the way it's
+ * moving, or else its compass bearing (0 = north, 90 = east) when it's standing still.
+ */
+function headingOf(t) {
   const dx = t.to.x - t.from.x;
-  if (Math.abs(dx) > 1) return dx > 0;
-  return Math.sin(((t.bearing ?? 90) * Math.PI) / 180) >= 0;
+  const dy = t.to.y - t.from.y;
+  if (Math.hypot(dx, dy) > 3) return (Math.atan2(-dy, dx) * 180) / Math.PI; // map y points north, screen y down
+  return (t.bearing ?? 90) - 90;
 }
 
-// a stable 0..2π offset per train so headlights don't all pulse in sync
-const phaseOf = (id) => [...id].reduce((a, c) => a + c.charCodeAt(0), 0) % 628 / 100;
+/** "lub-dub": two quick bumps then a rest, 0..1. */
+function heartbeat(ms) {
+  const p = (ms % BEAT_MS) / BEAT_MS;
+  const bump = (center, width) => Math.exp(-(((p - center) / width) ** 2));
+  return Math.min(1, bump(0.06, 0.05) + 0.65 * bump(0.24, 0.05));
+}
+
+// a stable offset per train so moving trains don't all beat in sync
+const phaseOf = (id) => ([...id].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 1000) * (BEAT_MS / 1000);
+
+const isMoving = (t) => t.status !== 'STOPPED_AT' && Math.hypot(t.to.x - t.from.x, t.to.y - t.from.y) > 3;
 
 /**
- * Live trains on the map, with an HD-2D-style finish: detailed pixel sprites, a
- * soft shadow under each car and a glowing headlight. Positions are State Plane
- * meters; (OX, OY, scale) is the map's world->screen transform. Each train glides
- * from its previous reported position to its latest one. Writes tap targets into hitsRef.
+ * Live trains on the map, seen from above. Each train points along its heading with
+ * a headlight beam shining ahead, sits on a soft shadow, and pulses like a heartbeat
+ * while it's moving (stopped trains stay still). Positions are State Plane meters;
+ * (OX, OY, scale) is the map's world->screen transform. Writes tap targets into hitsRef.
  */
 export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, showTags, hitsRef }) {
   const [now, setNow] = useState(Date.now());
@@ -40,13 +55,11 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
     return () => clearInterval(id);
   }, [trains.length]);
 
-  const px = scale < 0.05 ? 1 : scale < 0.3 ? 2 : 3; // small when zoomed out so they don't bury the stops
+  const px = scale < 0.15 ? 1 : scale < 0.4 ? 2 : 3; // small until zoomed in, so trains don't crowd the line
   const parts = useTrainParts(px);
   const w = TRAIN_SPRITE[0].length * px;
   const h = TRAIN_SPRITE.length * px;
-  // headlight centre relative to the sprite centre (facing right)
-  const lightX = (TRAIN_HEADLIGHT.col + 0.5) * px - w / 2;
-  const lightY = (TRAIN_HEADLIGHT.row + 0.5) * px - h / 2;
+  const beamLength = w * 1.4;
 
   const placed = [];
   for (const t of trains) {
@@ -55,48 +68,54 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
     const y = t.from.y + (t.to.y - t.from.y) * f;
     const sx = Math.round(x * scale + OX);
     const sy = Math.round(-y * scale + OY);
-    if (sx < -w || sy < -h || sx > width + w || sy > height + h) continue;
-    placed.push({ t, sx, sy, right: facesRight(t) });
+    if (sx < -w * 2 || sy < -w * 2 || sx > width + w * 2 || sy > height + w * 2) continue;
+    const moving = isMoving(t);
+    placed.push({ t, sx, sy, angle: headingOf(t), beat: moving ? heartbeat(now + phaseOf(t.id)) : 0, moving });
   }
-  hitsRef.current = placed.map(({ t, sx, sy }) => ({ id: t.id, x0: sx - w / 2 - 4, x1: sx + w / 2 + 4, y0: sy - h / 2 - 4, y1: sy + h / 2 + 4 }));
+  // rotated trains: a square around the centre is a forgiving tap target
+  const reach = w / 2 + 4;
+  hitsRef.current = placed.map(({ t, sx, sy }) => ({ id: t.id, x0: sx - reach, x1: sx + reach, y0: sy - reach, y1: sy + reach }));
 
   return (
     <G>
       <Defs>
         <RadialGradient id="trainShadow" cx="50%" cy="50%" r="50%">
-          <Stop offset="0%" stopColor="#000" stopOpacity={0.45} />
+          <Stop offset="0%" stopColor="#000" stopOpacity={0.4} />
           <Stop offset="100%" stopColor="#000" stopOpacity={0} />
         </RadialGradient>
-        <RadialGradient id="trainGlow" cx="50%" cy="50%" r="50%">
-          <Stop offset="0%" stopColor="#fffbe0" stopOpacity={0.95} />
-          <Stop offset="45%" stopColor="#ffd23f" stopOpacity={0.45} />
+        <LinearGradient id="trainBeam" x1="0" y1="0" x2="1" y2="0">
+          <Stop offset="0%" stopColor="#fff6c4" stopOpacity={0.85} />
+          <Stop offset="60%" stopColor="#ffd23f" stopOpacity={0.25} />
           <Stop offset="100%" stopColor="#ffd23f" stopOpacity={0} />
-        </RadialGradient>
+        </LinearGradient>
       </Defs>
 
-      {/* soft shadows first, so no car's shadow falls on another car */}
-      {placed.map(({ t, sx, sy }) => (
-        <Ellipse key={`s-${t.id}`} cx={sx} cy={sy + h / 2} rx={w * 0.58} ry={Math.max(3, px * 3)} fill="url(#trainShadow)" />
+      {/* soft shadows first, offset down a touch as if lit from above */}
+      {placed.map(({ t, sx, sy, angle }) => (
+        <G key={`s-${t.id}`} transform={`translate(${sx} ${sy + px * 2}) rotate(${angle})`}>
+          <Ellipse cx={0} cy={0} rx={w * 0.6} ry={h * 0.9} fill="url(#trainShadow)" />
+        </G>
       ))}
 
-      {placed.map(({ t, sx, sy, right }) => {
-        const pulse = 0.85 + 0.15 * Math.sin(now / 280 + phaseOf(t.id));
+      {placed.map(({ t, sx, sy, angle, beat, moving }) => {
+        const size = 1 + BEAT_SIZE * beat;
+        // the headlight beam: a cone from the front of the car, brighter on each heartbeat
+        const beam = `M${w / 2 - px} ${-h * 0.3}L${w / 2 + beamLength} ${-h * 1.3}L${w / 2 + beamLength} ${h * 1.3}L${w / 2 - px} ${h * 0.3}Z`;
         return (
           <G key={t.id} transform={`translate(${sx} ${sy})`}>
-            {t.id === selectedId && (
-              <Rect x={-w / 2 - 4} y={-h / 2 - 4} width={w + 8} height={h + 8} fill="none" stroke={PALETTE.gold} strokeWidth={3} />
-            )}
-            <G transform={right ? undefined : 'scale(-1 1)'}>
+            <G transform={`rotate(${angle}) scale(${size})`}>
+              <Path d={beam} fill="url(#trainBeam)" opacity={moving ? 0.55 + 0.45 * beat : 0.4} />
+              {t.id === selectedId && (
+                <Rect x={-w / 2 - 4} y={-h / 2 - 4} width={w + 8} height={h + 8} fill="none" stroke={PALETTE.gold} strokeWidth={3} />
+              )}
               {parts.map(({ color, d }) => (
                 <Path key={color} d={d} fill={color} />
               ))}
             </G>
-            {/* headlight bloom, a little ahead of the car */}
-            <Circle cx={right ? lightX + px : -lightX - px} cy={lightY} r={px * 6 * pulse} fill="url(#trainGlow)" />
             {showTags && (
               <G>
-                <Rect x={-6} y={-h / 2 - 14} width={12} height={12} fill={PALETTE.ink} />
-                <SvgText x={0.5} y={-h / 2 - 4} fontSize={8} fontFamily={FONT_TITLE} fill={PALETTE.gold} textAnchor="middle">
+                <Rect x={-6} y={-reach - 12} width={12} height={12} fill={PALETTE.ink} />
+                <SvgText x={0.5} y={-reach - 2} fontSize={8} fontFamily={FONT_TITLE} fill={PALETTE.gold} textAnchor="middle">
                   {t.branch}
                 </SvgText>
               </G>
