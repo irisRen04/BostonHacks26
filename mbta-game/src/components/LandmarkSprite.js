@@ -68,6 +68,38 @@ export function LandmarkPaths({ landmark, x, y, px, discovered, litSteps = null 
   );
 }
 
+// Map pin shown for landmarks when zoomed out: a round head with a star, tip at the bottom.
+export const LANDMARK_PIN = [
+  '..KKKKK..',
+  '.KYYYYYK.',
+  'KYYYWYYYK',
+  'KYWWWWWYK',
+  'KYYWWWYYK',
+  'KYWYYYWYK',
+  '.KYYYYYK.',
+  '..KYYYK..',
+  '...KYK...',
+  '....K....',
+];
+const PIN_COLORS = { known: { K: '#1b1b2f', Y: '#ffd23f', W: '#fff6c4' }, unknown: { K: '#1b1b2f', Y: '#4a5068', W: '#8f98b5' } };
+
+/** A landmark's map pin with its tip at (x, y): gold once discovered, slate before. */
+export function LandmarkPin({ x, y, px, discovered }) {
+  const parts = useMemo(() => {
+    const buckets = {};
+    const h = LANDMARK_PIN.length * px;
+    stampSprite(buckets, LANDMARK_PIN, Math.round(x), Math.round(y - h / 2), px, discovered ? PIN_COLORS.known : PIN_COLORS.unknown);
+    return Object.entries(buckets).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
+  }, [x, y, px, discovered]);
+  return (
+    <G>
+      {parts.map(({ color, d }) => (
+        <Path key={color} d={d} fill={color} />
+      ))}
+    </G>
+  );
+}
+
 /** Same as LandmarkPaths, but discovered landmarks with lights play their light-up loop. */
 export function AnimatedLandmarkPaths(props) {
   const litSteps = useLightUp(props.landmark, props.discovered);

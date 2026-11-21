@@ -25,7 +25,7 @@ import sea from '../data/sea.json';
 import water from '../data/water.json';
 import LiveTrains from './LiveTrains';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
-import { AnimatedLandmarkPaths } from './LandmarkSprite';
+import { AnimatedLandmarkPaths, LANDMARK_PIN, LandmarkPin } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
@@ -33,7 +33,14 @@ const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
 const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
-const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far
+const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far...
+const PIN_UNTIL = 0.25; // ...as small pins, until you're close enough for the building to fit
+
+// How a landmark is drawn at this zoom: a pin, or its building growing from 1 to 3 points per pixel.
+function landmarkLook(scale) {
+  if (scale < PIN_UNTIL) return { pin: true, px: 2 };
+  return { pin: false, px: scale < 0.5 ? 1 : scale < 1 ? 2 : 3 };
+}
 
 // Chunkier track and bigger stop sprites as you zoom in.
 function zoomStyle(scale) {
@@ -395,7 +402,7 @@ const TransitMap = forwardRef(function TransitMap(
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
     // landmarks, bottom-centre on their real location, only when zoomed in
-    const landmarkPx = scale < 0.3 ? 2 : 3;
+    const look = landmarkLook(scale);
     const placedLandmarks =
       scale < LANDMARK_SCALE
         ? []
@@ -403,9 +410,10 @@ const TransitMap = forwardRef(function TransitMap(
             .map((lm) => {
               const x = Math.round(lm.x * scale + OX);
               const y = Math.round(-lm.y * scale + OY);
-              const w = lm.sprite[0].length * landmarkPx;
-              const h = lm.sprite.length * landmarkPx;
-              return { landmark: lm, x, y, w, h, px: landmarkPx, // the nameplate to the right of the sprite is tappable too
+              const art = look.pin ? LANDMARK_PIN : lm.sprite;
+              const w = art[0].length * look.px;
+              const h = art.length * look.px;
+              return { landmark: lm, x, y, w, h, px: look.px, pin: look.pin, // the nameplate to the right of the sprite is tappable too
               hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 } };
             })
             .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
@@ -567,9 +575,17 @@ const TransitMap = forwardRef(function TransitMap(
           {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
 
           {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
-          {projected.placedLandmarks.map(({ landmark, x, y, px }) => (
-            <AnimatedLandmarkPaths key={landmark.id} landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
-          ))}
+          {projected.placedLandmarks.map(({ landmark, x, y, px, pin }) => {
+            const known = !!discovered?.[landmark.id];
+            return pin ? (
+              <LandmarkPin key={landmark.id} x={x} y={y} px={px} discovered={known} />
+            ) : (
+              // undiscovered buildings are faded so they tease rather than compete
+              <G key={landmark.id} opacity={known ? 1 : 0.6}>
+                <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={known} />
+              </G>
+            );
+          })}
 
           {/* stop sprites */}
           {projected.spritePaths.map(({ color, d }) => (
