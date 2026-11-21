@@ -20,3 +20,35 @@ export const stationsById = Object.fromEntries(stations.map((s) => [s.id, s]));
 export const branches = data.branches;
 export const tracks = data.tracks;
 export const greenBounds = data.bounds;
+
+/** Every stop directly connected to `id`, in up/left/right/down order. */
+export function neighborsOf(id) {
+  const s = stationsById[id];
+  return DIRECTIONS.flatMap((d) => s[d]);
+}
+
+/** A junction is where the line splits: more than two connected stops (Kenmore, Copley, Lechmere). */
+export function isJunction(id) {
+  return neighborsOf(id).length > 2;
+}
+
+/**
+ * Ways out of a stop. For each neighbour: which branches run from `id` to it,
+ * and the terminus each of those branches heads toward.
+ *   routeOptions('kenmore') -> [{ id: 'blandford-street', branches: ['B'], toward: ['Boston College'] }, ...]
+ */
+export function routeOptions(id) {
+  return neighborsOf(id).map((next) => {
+    const via = [];
+    const toward = [];
+    for (const [branch, seq] of Object.entries(branches)) {
+      const i = seq.indexOf(id);
+      const j = seq.indexOf(next);
+      if (i === -1 || j === -1 || Math.abs(i - j) !== 1) continue;
+      via.push(branch);
+      const end = stationsById[j > i ? seq[seq.length - 1] : seq[0]].name;
+      if (!toward.includes(end)) toward.push(end);
+    }
+    return { id: next, branches: via, toward };
+  });
+}

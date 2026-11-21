@@ -8,19 +8,27 @@ import { LINE_COLORS, stationsById } from './src/data/greenLine';
 
 export default function App() {
   const mapRef = useRef(null);
-  const [selectedId, setSelectedId] = useState(null);
+  // The rider's position: the stop they're at, and the stop they just came from.
+  const [trip, setTrip] = useState({ currentId: null, previousId: null });
+  const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
 
-  // Selecting from the card (a neighbour) also recentres the map on that stop.
-  const goTo = useCallback((id) => {
-    setSelectedId(id);
+  // Tapping a stop on the map drops the rider there (no previous stop yet).
+  const placeAt = useCallback((id) => {
+    setTrip({ currentId: id, previousId: null });
+    if (id) mapRef.current?.focusStation(stationsById[id]);
+  }, []);
+
+  // Riding to a connected stop from the card remembers where we came from and follows the rider.
+  const rideTo = useCallback((id) => {
+    setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
 
   return (
     <View style={styles.page}>
       <View style={styles.phone}>
-        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={setSelectedId} />
+        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt} />
 
         <View style={styles.header} pointerEvents="none">
           <View style={styles.lineBadge}>
@@ -35,7 +43,14 @@ export default function App() {
           <ZoomButton label="⤢" onPress={() => mapRef.current?.reset()} />
         </View>
 
-        {selected && <StationCard station={selected} onSelect={goTo} onClose={() => setSelectedId(null)} />}
+        {selected && (
+          <StationCard
+            station={selected}
+            previousId={trip.previousId}
+            onSelect={rideTo}
+            onClose={() => placeAt(null)}
+          />
+        )}
       </View>
       <StatusBar style="dark" />
     </View>
