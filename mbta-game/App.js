@@ -5,8 +5,11 @@ import { useFonts } from 'expo-font';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import useAvatar from './src/avatar/useAvatar';
+import GameMenu from './src/components/GameMenu';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
+import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
 import { stationsById } from './src/data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
@@ -17,6 +20,12 @@ export default function App() {
   const [trip, setTrip] = useState({ currentId: null, previousId: null });
   const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
+  const [avatar, setAvatar] = useAvatar();
+  // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
+  const [screen, setScreen] = useState(null);
+  // The corner avatar button sits just above the stop card when one is showing.
+  const [cardHeight, setCardHeight] = useState(0);
+  const menuBottom = selected ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
@@ -35,7 +44,7 @@ export default function App() {
   return (
     <View style={styles.page}>
       <View style={styles.phone}>
-        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt} />
+        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt} avatar={avatar} />
 
         <View style={styles.header} pointerEvents="none">
           <View style={styles.lineBadge}>
@@ -58,8 +67,16 @@ export default function App() {
             previousId={trip.previousId}
             onSelect={rideTo}
             onClose={() => placeAt(null)}
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
           />
         )}
+
+        <GameMenu avatar={avatar} bottom={menuBottom} onOpen={setScreen} />
+
+        {screen === 'customize' && (
+          <CustomizeScreen avatar={avatar} onSave={setAvatar} onClose={() => setScreen(null)} />
+        )}
+        {screen && screen !== 'customize' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
       </View>
       <StatusBar style="dark" />
     </View>
@@ -90,6 +107,7 @@ function StartHint() {
 }
 
 const isWeb = Platform.OS === 'web';
+const CARD_BOTTOM = 16; // matches StationCard's bottom offset
 
 const styles = StyleSheet.create({
   // On the web, show the app inside a phone-sized frame; on devices it fills the screen.
@@ -143,9 +161,11 @@ const styles = StyleSheet.create({
   zoomText: { fontFamily: FONT_TITLE, fontSize: 12, color: PALETTE.ink },
   hint: {
     position: 'absolute',
-    left: 24,
-    right: 24,
-    bottom: 32,
+    left: 14,
+    right: 92, // leave room for the avatar menu button
+    bottom: CARD_BOTTOM,
+    height: 64,
+    justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: PALETTE.night,
     borderWidth: 3,

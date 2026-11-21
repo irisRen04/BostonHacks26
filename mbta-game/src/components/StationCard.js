@@ -2,17 +2,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
+import { PixelButton, ui } from './ui';
 
 const ARROWS = { up: '▲', left: '◀', right: '▶', down: '▼' };
-
-/** Chunky pixel button: square corners, hard drop shadow that disappears when pressed. */
-function PixelButton({ onPress, style, children }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.button, pressed ? styles.buttonPressed : styles.buttonUp, style]}>
-      {children}
-    </Pressable>
-  );
-}
 
 function NeighborCell({ dir, ids, onSelect }) {
   return (
@@ -76,9 +68,9 @@ function JunctionChoices({ station, previousId, onSelect }) {
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
-export default function StationCard({ station, previousId, onSelect, onClose }) {
+export default function StationCard({ station, previousId, onSelect, onClose, onLayout }) {
   return (
-    <View style={styles.frame}>
+    <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>T</Text>
@@ -122,21 +114,7 @@ export default function StationCard({ station, previousId, onSelect, onClose }) 
 }
 
 const styles = StyleSheet.create({
-  // RPG-style dialog box: square corners, double border, hard offset shadow
-  frame: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 16,
-    backgroundColor: PALETTE.night,
-    borderWidth: 4,
-    borderColor: PALETTE.panelEdge,
-    outlineWidth: 3,
-    outlineColor: PALETTE.ink,
-    outlineStyle: 'solid',
-    boxShadow: `6px 6px 0px ${PALETTE.ink}`,
-    padding: 12,
-  },
+  frame: { position: 'absolute', left: 12, right: 12, bottom: 16, padding: 12 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   badge: {
     width: 30,
@@ -156,10 +134,6 @@ const styles = StyleSheet.create({
   chipText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.white },
   body: { fontFamily: FONT_BODY, fontSize: 19, color: PALETTE.ink },
   dim: { color: '#6b7393' },
-
-  button: { backgroundColor: PALETTE.white, borderWidth: 3, borderColor: PALETTE.ink },
-  buttonUp: { boxShadow: `3px 3px 0px ${PALETTE.ink}` },
-  buttonPressed: { transform: [{ translateX: 3 }, { translateY: 3 }], backgroundColor: PALETTE.gold },
 
   pad: { marginTop: 12, gap: 6 },
   middleRow: { flexDirection: 'row', gap: 6 },

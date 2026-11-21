@@ -71,26 +71,12 @@ export const TRANSFER_SPRITE = [
 export const STOP_SPRITE_SMALL = ['.KKK.', 'KWWWK', 'KWGWK', 'KWWWK', '.KKK.'];
 export const TRANSFER_SPRITE_SMALL = ['.KKK.', 'KYYYK', 'KYGYK', 'KYYYK', '.KKK.'];
 
-/** The rider: a little Green Line trolley that sits above the current stop. */
-export const TROLLEY_SPRITE = [
-  '....KKK....',
-  '.....K.....',
-  'KKKKKKKKKKK',
-  'KLLLLLLLLLK',
-  'KGWWGWGWWGK',
-  'KGWWGWGWWGK',
-  'KGGGGGGGGGK',
-  'KYGGGGGGGYK',
-  'KKKKKKKKKKK',
-  '.KSK...KSK.',
-  '..K.....K..',
-];
-
 /**
  * Add a sprite to per-colour cell buckets. (cx, cy) is the sprite's center in
- * screen points and `s` the size of one sprite pixel.
+ * screen points, `s` the size of one sprite pixel, and `colors` maps sprite
+ * characters to colours.
  */
-export function stampSprite(buckets, sprite, cx, cy, s) {
+export function stampSprite(buckets, sprite, cx, cy, s, colors = SPRITE_KEY) {
   const h = sprite.length;
   const w = sprite[0].length;
   const x0 = Math.round(cx - (w * s) / 2);
@@ -98,7 +84,7 @@ export function stampSprite(buckets, sprite, cx, cy, s) {
   for (let y = 0; y < h; y++) {
     const row = sprite[y];
     for (let x = 0; x < w; x++) {
-      const color = SPRITE_KEY[row[x]];
+      const color = colors[row[x]];
       if (!color) continue;
       (buckets[color] ??= []).push([x0 + x * s, y0 + y * s, s]);
     }

@@ -18,7 +18,7 @@ import {
   stampSprite,
   topEdge,
 } from '../theme/pixel';
-import PlayerTrolley from './PlayerTrolley';
+import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
@@ -64,7 +64,7 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * Map coordinates are State Plane meters (y = north), projected to screen as
  *   sx = (x - cx) * scale + width / 2,  sy = (cy - y) * scale + height / 2.
  */
-const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation }, ref) {
+const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation, avatar }, ref) {
   const [size, setSize] = useState(null);
   const [camera, setCamera] = useState(null);
   const cameraRef = useRef(camera);
@@ -345,7 +345,9 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation 
             ))}
 
           {/* the rider */}
-          {current && <PlayerTrolley x={current.x} y={current.y - projected.spriteHalf - 26} />}
+          {current && (
+            <PlayerAvatar avatar={avatar} x={current.x} y={current.y - projected.spriteHalf - PLAYER_HEIGHT / 2 - 2} />
+          )}
         </Svg>
       )}
     </View>
