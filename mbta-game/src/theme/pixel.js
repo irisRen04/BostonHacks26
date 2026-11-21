@@ -79,6 +79,19 @@ export const TRANSFER_SPRITE = [
 export const STOP_SPRITE_SMALL = ['.KKK.', 'KWWWK', 'KWGWK', 'KWWWK', '.KKK.'];
 export const TRANSFER_SPRITE_SMALL = ['.KKK.', 'KYYYK', 'KYGYK', 'KYYYK', '.KKK.'];
 
+/** A live Green Line train: side view of a trolley with its pole and headlights. */
+export const TROLLEY_SPRITE = [
+  '....KKK....',
+  '.....K.....',
+  'KKKKKKKKKKK',
+  'KLLLLLLLLLK',
+  'KGWWGWGWWGK',
+  'KGGGGGGGGGK',
+  'KYGGGGGGGYK',
+  'KKKKKKKKKKK',
+  '.KSK...KSK.',
+];
+
 /**
  * Add a sprite to per-colour cell buckets. (cx, cy) is the sprite's center in
  * screen points, `s` the size of one sprite pixel, and `colors` maps sprite

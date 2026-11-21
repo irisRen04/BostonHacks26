@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
+import NextTrains from './NextTrains';
 import { PixelButton, ui } from './ui';
 
 /**
@@ -167,6 +168,8 @@ export default function StationCard({ station, previousId, activeSignId, onSelec
           </View>
         ))}
       </View>
+
+      <NextTrains stationId={station.id} />
 
       {isJunction(station.id) ? (
         <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />

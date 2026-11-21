@@ -23,6 +23,7 @@ import { landmarks } from '../data/landmarks';
 import parks from '../data/parks.json';
 import sea from '../data/sea.json';
 import water from '../data/water.json';
+import LiveTrains from './LiveTrains';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
 import { AnimatedLandmarkPaths } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
@@ -112,7 +113,19 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * current stop (see JunctionSigns). Tapping a sign calls onSignPress(neighbourId).
  */
 const TransitMap = forwardRef(function TransitMap(
-  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress, discovered, onLandmarkPress },
+  {
+    selectedId,
+    onSelectStation,
+    avatar,
+    signs,
+    activeSignId,
+    onSignPress,
+    discovered,
+    onLandmarkPress,
+    liveTrains = [],
+    selectedTrainId,
+    onTrainPress,
+  },
   ref,
 ) {
   const [size, setSize] = useState(null);
@@ -131,6 +144,9 @@ const TransitMap = forwardRef(function TransitMap(
   const onLandmarkRef = useRef(onLandmarkPress);
   onLandmarkRef.current = onLandmarkPress;
   const landmarkHitsRef = useRef([]);
+  const onTrainRef = useRef(onTrainPress);
+  onTrainRef.current = onTrainPress;
+  const trainHitsRef = useRef([]);
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
@@ -176,11 +192,11 @@ const TransitMap = forwardRef(function TransitMap(
     },
   }));
 
-  const hitTest = useCallback((px, py) => {
+  const hitTest = useCallback((px, py, radius = HIT_RADIUS) => {
     const cam = cameraRef.current;
     const sz = sizeRef.current;
     let best = null;
-    let bestD = HIT_RADIUS;
+    let bestD = radius;
     for (const s of stations) {
       const sx = (s.x - cam.cx) * cam.scale + sz.width / 2;
       const sy = (cam.cy - s.y) * cam.scale + sz.height / 2;
@@ -257,12 +273,18 @@ const TransitMap = forwardRef(function TransitMap(
       onPanResponderRelease: () => {
         const g = gesture.current;
         if (g && !g.moved && g.tap) {
+          // what was tapped, most specific first: a sign, right on a stop, a train, a landmark, near a stop
+          const inBox = (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1;
           const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
-          const landmark = sign ? null : landmarkHitsRef.current.find(
-            (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1,
-          );
+          const exactStop = sign ? null : hitTest(g.tap.x, g.tap.y, 10);
+          const train = sign || exactStop ? null : trainHitsRef.current.find(inBox);
+          const landmark = sign || exactStop || train ? null : landmarkHitsRef.current.find(inBox);
           if (sign) {
             onSignRef.current?.(sign.id);
+          } else if (exactStop) {
+            onSelectRef.current?.(exactStop.id);
+          } else if (train) {
+            onTrainRef.current?.(train.id);
           } else if (landmark) {
             onLandmarkRef.current?.(landmark.id);
           } else {
@@ -388,11 +410,12 @@ const TransitMap = forwardRef(function TransitMap(
             .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
 
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
-    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks };
+    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks, OX, OY };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
+  if (!liveTrains.length) trainHitsRef.current = []; // no trains drawn, nothing to tap
   const current = projected?.stops.find((p) => p.station.id === selectedId);
 
   // Junction signposts, laid out around the current stop toward each neighbour.
@@ -508,6 +531,21 @@ const TransitMap = forwardRef(function TransitMap(
                 active={station.id === selectedId}
               />
             ))}
+
+          {/* live trains (from the MBTA API) */}
+          {liveTrains.length > 0 && (
+            <LiveTrains
+              trains={liveTrains}
+              scale={scale}
+              OX={projected.OX}
+              OY={projected.OY}
+              width={size.width}
+              height={size.height}
+              selectedId={selectedTrainId}
+              showTags={showAllLabels}
+              hitsRef={trainHitsRef}
+            />
+          )}
 
           {/* landmark nameplates */}
           {projected.placedLandmarks.map(({ landmark, x, y, w, h }) => (
