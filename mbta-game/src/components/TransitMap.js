@@ -429,6 +429,53 @@ const TransitMap = forwardRef(function TransitMap(
   landmarkHitsRef.current = projected ? projected.placedLandmarks.map((p) => p.hit) : [];
   const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
 
+  // ---- labels: gather every candidate, then place them in priority order and skip
+  // any that would overlap one already placed (it comes back when you zoom in)
+  const placedLabels = [];
+  if (projected) {
+    const candidates = [];
+    for (const { station, x, y } of projected.stops) {
+      const important = station.terminus || station.transfers.length > 0 || station.name === 'Kenmore';
+      if (!(showAllLabels || important || station.id === selectedId)) continue;
+      if (placedSigns.length && station.id !== selectedId) {
+        // while junction signs are up, keep labels clear of the junction so the signs read clearly
+        const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
+        const nx = Math.min(Math.max(current.x, x), right);
+        const ny = Math.min(Math.max(current.y, y - 8), y + 8);
+        if (Math.hypot(nx - current.x, ny - current.y) <= SIGN_CLEAR_RADIUS) continue;
+      }
+      candidates.push({
+        key: `l-${station.id}`,
+        x: Math.round(x + projected.spriteHalf + 4),
+        y: Math.round(y),
+        text: station.name.toUpperCase(),
+        active: station.id === selectedId,
+        priority: station.id === selectedId ? 0 : important ? 1 : 4,
+      });
+    }
+    for (const { landmark, x, y, w, h } of projected.placedLandmarks) {
+      const known = !!discovered?.[landmark.id];
+      candidates.push({
+        key: `lm-${landmark.id}`,
+        x: Math.round(x + w / 2 + 2),
+        y: Math.round(y - h + 8),
+        text: known ? `★ ${landmark.shortName}` : '???',
+        active: known,
+        priority: known ? 2 : 3,
+      });
+    }
+    candidates.sort((p, q) => p.priority - q.priority);
+    const boxes = [];
+    const PAD = 2;
+    for (const c of candidates) {
+      const box = { x0: c.x - PAD, x1: c.x + c.text.length * LABEL_SIZE + 8 + PAD, y0: c.y - LABEL_SIZE / 2 - 4 - PAD, y1: c.y + LABEL_SIZE / 2 + 4 + PAD };
+      if (box.x1 < 0 || box.x0 > size.width || box.y1 < 0 || box.y0 > size.height) continue;
+      if (c.priority > 0 && boxes.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0)) continue;
+      boxes.push(box);
+      placedLabels.push(c);
+    }
+  }
+
   return (
     <View ref={containerRef} style={styles.container} onLayout={onLayout} {...responder.panHandlers}>
       {projected && (
@@ -507,32 +554,6 @@ const TransitMap = forwardRef(function TransitMap(
             <Path key={color} d={d} fill={color} />
           ))}
 
-          {/* nameplates */}
-          {projected.stops
-            .filter(
-              ({ station }) =>
-                showAllLabels || station.terminus || station.transfers.length > 0 || station.id === selectedId || station.name === 'Kenmore',
-            )
-            // while junction signs are up, clear nameplates around the junction so the signs read clearly
-            .filter(({ station, x, y }) => {
-              if (!placedSigns.length) return true;
-              // nearest point of the nameplate box to the junction
-              const left = x;
-              const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
-              const nx = Math.min(Math.max(current.x, left), right);
-              const ny = Math.min(Math.max(current.y, y - 8), y + 8);
-              return Math.hypot(nx - current.x, ny - current.y) > SIGN_CLEAR_RADIUS;
-            })
-            .map(({ station, x, y }) => (
-              <Nameplate
-                key={`l-${station.id}`}
-                x={Math.round(x + projected.spriteHalf + 4)}
-                y={Math.round(y)}
-                text={station.name.toUpperCase()}
-                active={station.id === selectedId}
-              />
-            ))}
-
           {/* live trains (from the MBTA API) */}
           {liveTrains.length > 0 && (
             <LiveTrains
@@ -544,20 +565,13 @@ const TransitMap = forwardRef(function TransitMap(
               height={size.height}
               selectedId={selectedTrainId}
               waitingFor={waitingFor}
-              showTags={showAllLabels}
               hitsRef={trainHitsRef}
             />
           )}
 
-          {/* landmark nameplates */}
-          {projected.placedLandmarks.map(({ landmark, x, y, w, h }) => (
-            <Nameplate
-              key={`lm-${landmark.id}`}
-              x={Math.round(x + w / 2 + 2)}
-              y={Math.round(y - h + 8)}
-              text={discovered?.[landmark.id] ? `★ ${landmark.shortName}` : '???'}
-              active={!!discovered?.[landmark.id]}
-            />
+          {/* nameplates for stops and landmarks, overlapping ones left out (see placedLabels) */}
+          {placedLabels.map((l) => (
+            <Nameplate key={l.key} x={l.x} y={l.y} text={l.text} active={l.active} />
           ))}
 
           {/* the rider */}

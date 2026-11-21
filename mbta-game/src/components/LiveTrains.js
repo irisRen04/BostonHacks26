@@ -43,7 +43,7 @@ function pulse(ms) {
  * gently grows and shrinks; every other train stays still. Positions are State Plane meters;
  * (OX, OY, scale) is the map's world->screen transform. Writes tap targets into hitsRef.
  */
-export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingFor, showTags, hitsRef }) {
+export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingFor, hitsRef }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!trains.length) return undefined;
@@ -87,8 +87,8 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
         </LinearGradient>
       </Defs>
 
-      {/* soft shadows first, offset down a touch as if lit from above */}
-      {placed.map(({ t, sx, sy, angle }) => (
+      {/* soft shadows first, offset down a touch as if lit from above (skipped zoomed out: just haze) */}
+      {px > 1 && placed.map(({ t, sx, sy, angle }) => (
         <G key={`s-${t.id}`} transform={`translate(${sx} ${sy + px * 2}) rotate(${angle})`}>
           <Ellipse cx={0} cy={0} rx={w * 0.6} ry={h * 0.9} fill="url(#trainShadow)" />
         </G>
@@ -103,7 +103,7 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
         return (
           <G key={t.id} transform={`translate(${sx} ${sy})`}>
             <G transform={`rotate(${angle}) scale(${size})`}>
-              <Path d={beam} fill="url(#trainBeam)" opacity={mine ? 0.6 + 0.4 * beat : 0.45} />
+              {(px > 1 || mine) && <Path d={beam} fill="url(#trainBeam)" opacity={mine ? 0.6 + 0.4 * beat : 0.45} />}
               {(mine || t.id === selectedId) && (
                 <Rect x={-w / 2 - 4} y={-h / 2 - 4} width={w + 8} height={h + 8} fill="none" stroke={PALETTE.gold} strokeWidth={3} />
               )}
@@ -116,14 +116,6 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
                 <Rect x={-labelW / 2} y={-reach * YOURS_SIZE - 16} width={labelW} height={13} fill={PALETTE.gold} />
                 <SvgText x={0} y={-reach * YOURS_SIZE - 6} fontSize={6} fontFamily={FONT_TITLE} fill={PALETTE.ink} textAnchor="middle">
                   {label}
-                </SvgText>
-              </G>
-            )}
-            {showTags && !mine && (
-              <G>
-                <Rect x={-6} y={-reach - 12} width={12} height={12} fill={PALETTE.ink} />
-                <SvgText x={0.5} y={-reach - 2} fontSize={8} fontFamily={FONT_TITLE} fill={PALETTE.gold} textAnchor="middle">
-                  {t.branch}
                 </SvgText>
               </G>
             )}

@@ -51,6 +51,19 @@ export default function App() {
     return list.find((a) => a.id === watchId) ?? list[0] ?? null;
   }, [arrivals.arrivals, live.trains, watchId]);
   const waitingFor = watched ? { trainId: watched.vehicleId, minutes: watched.minutes } : null;
+
+  // Fewer trains on the map: with a stop selected, only trains on its branches or close by
+  // (plus your train and the one whose card is open). With no stop, every train shows.
+  const visibleTrains = useMemo(() => {
+    if (!selected) return live.trains;
+    return live.trains.filter(
+      (t) =>
+        t.id === waitingFor?.trainId ||
+        t.id === trainId ||
+        selected.branches.includes(t.branch) ||
+        Math.hypot(t.to.x - selected.x, t.to.y - selected.y) < NEARBY_M,
+    );
+  }, [live.trains, selected, waitingFor?.trainId, trainId]);
   const menuBottom = selected || landmark || train ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
@@ -122,7 +135,7 @@ export default function App() {
           onSignPress={pressSign}
           discovered={discovered}
           onLandmarkPress={openLandmark}
-          liveTrains={live.trains}
+          liveTrains={visibleTrains}
           waitingFor={waitingFor}
           selectedTrainId={trainId}
           onTrainPress={(id) => {
@@ -248,6 +261,7 @@ function StartHint() {
 
 const isWeb = Platform.OS === 'web';
 const CARD_BOTTOM = 16; // matches StationCard's bottom offset
+const NEARBY_M = 1500; // trains within this many meters of your stop stay on the map
 
 const styles = StyleSheet.create({
   // On the web, show the app inside a phone-sized frame; on devices it fills the screen.
