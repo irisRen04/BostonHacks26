@@ -1,15 +1,48 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, StyleSheet, View } from 'react-native';
-import Svg, { G, Polyline, Text as SvgText } from 'react-native-svg';
+import Svg, { Defs, G, Path, Pattern, Rect, Text as SvgText } from 'react-native-svg';
 
-import { LINE_COLORS, greenBounds, stations, tracks } from '../data/greenLine';
-import StationTarget from './StationTarget';
+import { greenBounds, stations, tracks } from '../data/greenLine';
+import {
+  FONT_TITLE,
+  LINE_PIXEL_COLORS,
+  PALETTE,
+  PX,
+  STOP_SPRITE,
+  STOP_SPRITE_SMALL,
+  TRANSFER_SPRITE,
+  TRANSFER_SPRITE_SMALL,
+  cellsToPath,
+  rasterize,
+  squaresToPath,
+  stampSprite,
+  topEdge,
+} from '../theme/pixel';
+import PlayerTrolley from './PlayerTrolley';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
-const LABEL_FONT = Platform.select({ ios: 'Helvetica Neue', android: 'sans-serif-medium', default: 'Helvetica Neue, Helvetica, Arial, sans-serif' });
+
+// Chunkier track and bigger stop sprites as you zoom in.
+function zoomStyle(scale) {
+  if (scale < 0.05) return { track: 1, sprite: STOP_SPRITE_SMALL, transfer: TRANSFER_SPRITE_SMALL, s: 2 };
+  if (scale < 0.15) return { track: 2, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 2 };
+  if (scale < 0.5) return { track: 3, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 3 };
+  return { track: 4, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 4 };
+}
+
+// Ground texture tile, in map pixels: [x, y, colour]
+const GROUND_TILE = 8;
+const GROUND_SPECKS = [
+  [1, 2, PALETTE.groundSpeck],
+  [5, 6, PALETTE.groundSpeck],
+  [6, 1, PALETTE.groundDark],
+  [2, 5, PALETTE.groundDark],
+  [3, 3, PALETTE.groundDark],
+  [7, 4, PALETTE.groundSpeck],
+];
 
 function fitCamera(width, height) {
   const pad = 0.88;
@@ -201,121 +234,152 @@ const TransitMap = forwardRef(function TransitMap({ selectedId, onSelectStation 
     return () => node.removeEventListener('wheel', onWheel);
   }, [zoomAt, size]);
 
-  // ---- projection of everything to screen space for the current camera
+  // ---- rasterize everything into screen-space pixels for the current camera
   const projected = useMemo(() => {
     if (!camera || !size) return null;
     const { scale, cx, cy } = camera;
-    const ox = size.width / 2;
-    const oy = size.height / 2;
-    const px = (x) => (x - cx) * scale + ox;
-    const py = (y) => (cy - y) * scale + oy;
-    const margin = 60;
-    const visible = (x, y) => x > -margin && y > -margin && x < size.width + margin && y < size.height + margin;
+    const { width, height } = size;
+    // World origin on screen; the pixel grid is anchored to it so pixels slide with the map.
+    const OX = width / 2 - cx * scale;
+    const OY = height / 2 + cy * scale;
+    const gox = Math.round(((OX % PX) + PX) % PX) - PX;
+    const goy = Math.round(((OY % PX) + PX) % PX) - PX;
+    const toScreen = (pts) => pts.map(([x, y]) => [x * scale + OX, -y * scale + OY]);
+    const style = zoomStyle(scale);
 
-    const lines = tracks.map((t, i) => ({
-      key: i,
-      line: t.line,
-      points: t.points.map(([x, y]) => `${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(' '),
+    // other lines: flat, muted, one size thinner
+    const others = {};
+    for (const t of tracks) {
+      if (t.line === 'Green') continue;
+      (others[t.line] ??= []).push(toScreen(t.points));
+    }
+    const otherPaths = Object.entries(others).map(([line, polys]) => ({
+      line,
+      d: cellsToPath(rasterize(polys, Math.max(1, style.track - 1), gox, goy, width, height), gox, goy),
     }));
-    const stops = stations
-      .map((s) => ({ station: s, x: px(s.x), y: py(s.y) }))
-      .filter((p) => visible(p.x, p.y));
-    return { lines, stops };
+
+    // Green Line: dark outline, fill, and a light bevel on the top edge
+    const green = tracks.filter((t) => t.line === 'Green').map((t) => toScreen(t.points));
+    const fill = rasterize(green, style.track, gox, goy, width, height);
+    const greenPaths = {
+      outline: cellsToPath(rasterize(green, style.track + 2, gox, goy, width, height), gox, goy),
+      fill: cellsToPath(fill, gox, goy),
+      highlight: style.track >= 2 ? cellsToPath(topEdge(fill), gox, goy) : '',
+    };
+
+    // stops, snapped to the pixel grid
+    const margin = 40;
+    const stops = [];
+    const sprites = {};
+    for (const st of stations) {
+      const sx = st.x * scale + OX;
+      const sy = -st.y * scale + OY;
+      if (sx < -margin || sy < -margin || sx > width + margin || sy > height + margin) continue;
+      const x = gox + (Math.floor((sx - gox) / PX) + 0.5) * PX;
+      const y = goy + (Math.floor((sy - goy) / PX) + 0.5) * PX;
+      stops.push({ station: st, x, y });
+      stampSprite(sprites, st.transfers.length ? style.transfer : style.sprite, x, y, style.s);
+    }
+    const spritePaths = Object.entries(sprites).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
+    const spriteHalf = (style.sprite.length * style.s) / 2;
+
+    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
-  const trackWidth = Math.min(12, Math.max(3.5, scale * 14));
-  const iconRadius = Math.min(13, Math.max(5, scale * 22));
   const showAllLabels = scale >= LABEL_SCALE;
+  const current = projected?.stops.find((p) => p.station.id === selectedId);
 
   return (
-    <View
-      ref={containerRef}
-      style={styles.container}
-      onLayout={onLayout}
-      {...responder.panHandlers}
-    >
+    <View ref={containerRef} style={styles.container} onLayout={onLayout} {...responder.panHandlers}>
       {projected && (
-        <Svg width={size.width} height={size.height} pointerEvents="none">
-          {/* background: every rapid transit line, muted */}
-          <G opacity={0.28}>
-            {projected.lines
-              .filter((l) => l.line !== 'Green')
-              .map((l) => (
-                <Polyline
-                  key={l.key}
-                  points={l.points}
-                  fill="none"
-                  stroke={LINE_COLORS[l.line] ?? '#888'}
-                  strokeWidth={trackWidth * 0.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
+        <Svg width={size.width} height={size.height} pointerEvents="none" shapeRendering="crispEdges">
+          <Defs>
+            <Pattern
+              id="ground"
+              patternUnits="userSpaceOnUse"
+              x={projected.gox}
+              y={projected.goy}
+              width={GROUND_TILE * PX}
+              height={GROUND_TILE * PX}
+            >
+              <Rect width={GROUND_TILE * PX} height={GROUND_TILE * PX} fill={PALETTE.ground} />
+              {GROUND_SPECKS.map(([x, y, c]) => (
+                <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
               ))}
-          </G>
-          {/* Green Line track */}
-          {projected.lines
-            .filter((l) => l.line === 'Green')
-            .map((l) => (
-              <Polyline
-                key={l.key}
-                points={l.points}
-                fill="none"
-                stroke={LINE_COLORS.Green}
-                strokeWidth={trackWidth}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+            </Pattern>
+          </Defs>
+          <Rect width={size.width} height={size.height} fill="url(#ground)" />
+
+          {/* the rest of the MBTA, muted */}
+          <G opacity={0.45}>
+            {projected.otherPaths.map(({ line, d }) => (
+              <Path key={line} d={d} fill={LINE_PIXEL_COLORS[line] ?? PALETTE.silver} />
             ))}
-          {/* stops */}
-          {projected.stops.map(({ station, x, y }) => (
-            <StationTarget
-              key={station.id}
-              x={x}
-              y={y}
-              radius={iconRadius}
-              transfer={station.transfers.length > 0}
-              selected={station.id === selectedId}
-            />
+          </G>
+
+          {/* Green Line track */}
+          <Path d={projected.greenPaths.outline} fill={PALETTE.greenDark} />
+          <Path d={projected.greenPaths.fill} fill={PALETTE.green} />
+          {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
+
+          {/* stop sprites */}
+          {projected.spritePaths.map(({ color, d }) => (
+            <Path key={color} d={d} fill={color} />
           ))}
-          {/* labels */}
+
+          {/* nameplates */}
           {projected.stops
             .filter(
               ({ station }) =>
                 showAllLabels || station.terminus || station.transfers.length > 0 || station.id === selectedId || station.name === 'Kenmore',
             )
             .map(({ station, x, y }) => (
-              <G key={`l-${station.id}`}>
-                <SvgText
-                  x={x + iconRadius + 4}
-                  y={y + 4}
-                  fontSize={12}
-                  fontFamily={LABEL_FONT}
-                  fontWeight="700"
-                  stroke="#fff"
-                  strokeWidth={3.5}
-                  strokeLinejoin="round"
-                  fill="#fff"
-                >
-                  {station.name}
-                </SvgText>
-                <SvgText x={x + iconRadius + 4} y={y + 4} fontSize={12} fontFamily={LABEL_FONT} fontWeight="700" fill="#1c1c1c">
-                  {station.name}
-                </SvgText>
-              </G>
+              <Nameplate
+                key={`l-${station.id}`}
+                x={Math.round(x + projected.spriteHalf + 4)}
+                y={Math.round(y)}
+                text={station.name.toUpperCase()}
+                active={station.id === selectedId}
+              />
             ))}
+
+          {/* the rider */}
+          {current && <PlayerTrolley x={current.x} y={current.y - projected.spriteHalf - 26} />}
         </Svg>
       )}
     </View>
   );
 });
 
+const LABEL_SIZE = 8; // Press Start 2P is drawn on an 8px grid and is monospaced
+
+function Nameplate({ x, y, text, active }) {
+  const w = text.length * LABEL_SIZE + 8;
+  const h = LABEL_SIZE + 8;
+  return (
+    <G>
+      <Rect x={x + 2} y={y - h / 2 + 2} width={w} height={h} fill={PALETTE.ink} opacity={0.35} />
+      <Rect x={x} y={y - h / 2} width={w} height={h} fill={active ? PALETTE.gold : PALETTE.ink} />
+      <SvgText
+        x={x + 4}
+        y={y + LABEL_SIZE / 2}
+        fontSize={LABEL_SIZE}
+        fontFamily={FONT_TITLE}
+        fill={active ? PALETTE.ink : PALETTE.white}
+      >
+        {text}
+      </SvgText>
+    </G>
+  );
+}
+
 export default TransitMap;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F4F1EA',
+    backgroundColor: PALETTE.ground,
     overflow: 'hidden',
     userSelect: 'none',
   },

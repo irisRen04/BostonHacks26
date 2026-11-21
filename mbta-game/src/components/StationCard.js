@@ -1,22 +1,32 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { LINE_COLORS, isJunction, routeOptions, stationsById } from '../data/greenLine';
+import { isJunction, routeOptions, stationsById } from '../data/greenLine';
+import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 
-const ARROWS = { up: '↑', left: '←', right: '→', down: '↓' };
+const ARROWS = { up: '▲', left: '◀', right: '▶', down: '▼' };
+
+/** Chunky pixel button: square corners, hard drop shadow that disappears when pressed. */
+function PixelButton({ onPress, style, children }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.button, pressed ? styles.buttonPressed : styles.buttonUp, style]}>
+      {children}
+    </Pressable>
+  );
+}
 
 function NeighborCell({ dir, ids, onSelect }) {
   return (
-    <View style={[styles.cell, styles[`cell_${dir}`]]}>
-      <Text style={styles.arrow}>{ARROWS[dir]}</Text>
+    <View style={[styles.cell, (dir === 'up' || dir === 'down') && styles.cellCenter]}>
+      <Text style={[styles.arrow, ids.length === 0 && styles.dim]}>{ARROWS[dir]}</Text>
       {ids.length === 0 ? (
-        <Text style={styles.none}>—</Text>
+        <Text style={[styles.body, styles.dim]}>---</Text>
       ) : (
         ids.map((id) => (
-          <Pressable key={id} onPress={() => onSelect(id)} style={styles.neighbor}>
-            <Text style={styles.neighborText} numberOfLines={1}>
+          <PixelButton key={id} onPress={() => onSelect(id)} style={styles.neighbor}>
+            <Text style={styles.body} numberOfLines={1}>
               {stationsById[id].name}
             </Text>
-          </Pressable>
+          </PixelButton>
         ))
       )}
     </View>
@@ -33,62 +43,55 @@ function JunctionChoices({ station, previousId, onSelect }) {
   const forward = options.filter((o) => o.id !== previousId);
   return (
     <View style={styles.junction}>
-      <Text style={styles.junctionPrompt}>The line splits here. Where to?</Text>
+      <Text style={styles.prompt}>THE LINE SPLITS! WHERE TO?</Text>
       {forward.map((o) => (
-        <Pressable
-          key={o.id}
-          onPress={() => onSelect(o.id)}
-          style={({ pressed }) => [styles.option, pressed && styles.optionPressed]}
-        >
+        <PixelButton key={o.id} onPress={() => onSelect(o.id)} style={styles.option}>
           <View style={styles.optionBranches}>
             {o.branches.map((b) => (
-              <View key={b} style={styles.branchDot}>
-                <Text style={styles.branchDotText}>{b}</Text>
+              <View key={b} style={styles.branchTile}>
+                <Text style={styles.branchTileText}>{b}</Text>
               </View>
             ))}
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.optionName} numberOfLines={1}>
-              {stationsById[o.id].name}
+              {stationsById[o.id].name.toUpperCase()}
             </Text>
             <Text style={styles.optionToward} numberOfLines={1}>
-              toward {o.toward.join(' / ')}
+              to {o.toward.join(' / ')}
             </Text>
           </View>
-          <Text style={styles.optionChevron}>›</Text>
-        </Pressable>
+          <Text style={styles.cursor}>▶</Text>
+        </PixelButton>
       ))}
       {back && (
-        <Pressable
-          onPress={() => onSelect(back.id)}
-          style={({ pressed }) => [styles.backButton, pressed && styles.optionPressed]}
-        >
+        <PixelButton onPress={() => onSelect(back.id)} style={styles.back}>
           <Text style={styles.backText} numberOfLines={1}>
-            ↩ Back to {stationsById[back.id].name}
+            ◀ BACK TO {stationsById[back.id].name.toUpperCase()}
           </Text>
-        </Pressable>
+        </PixelButton>
       )}
     </View>
   );
 }
 
-/** Bottom sheet with a station's data: line, name, order on each branch, and left/right/up/down neighbours. */
+/** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
 export default function StationCard({ station, previousId, onSelect, onClose }) {
   return (
-    <View style={styles.card}>
+    <View style={styles.frame}>
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>T</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{station.name}</Text>
+          <Text style={styles.name}>{station.name.toUpperCase()}</Text>
           <Text style={styles.sub}>
-            {station.line} Line{station.terminus ? ' · Terminus' : ''}
-            {station.transfers.length ? ` · Transfer: ${station.transfers.join(', ')}` : ''}
+            {station.line} Line{station.terminus ? ' · end of line' : ''}
+            {station.transfers.length ? ` · ★ transfer: ${station.transfers.join(', ')}` : ''}
           </Text>
         </View>
         <Pressable onPress={onClose} hitSlop={12}>
-          <Text style={styles.close}>✕</Text>
+          <Text style={styles.close}>X</Text>
         </Pressable>
       </View>
 
@@ -96,7 +99,7 @@ export default function StationCard({ station, previousId, onSelect, onClose }) 
         {station.branches.map((b) => (
           <View key={b} style={styles.chip}>
             <Text style={styles.chipText}>
-              {b} · stop {station.order[b]}
+              {b}-{String(station.order[b]).padStart(2, '0')}
             </Text>
           </View>
         ))}
@@ -119,91 +122,69 @@ export default function StationCard({ station, previousId, onSelect, onClose }) 
 }
 
 const styles = StyleSheet.create({
-  card: {
+  // RPG-style dialog box: square corners, double border, hard offset shadow
+  frame: {
     position: 'absolute',
     left: 12,
     right: 12,
     bottom: 16,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
+    backgroundColor: PALETTE.night,
+    borderWidth: 4,
+    borderColor: PALETTE.panelEdge,
+    outlineWidth: 3,
+    outlineColor: PALETTE.ink,
+    outlineStyle: 'solid',
+    boxShadow: `6px 6px 0px ${PALETTE.ink}`,
+    padding: 12,
   },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   badge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 30,
+    height: 30,
     borderWidth: 3,
-    borderColor: '#1c1c1c',
+    borderColor: PALETTE.ink,
+    backgroundColor: PALETTE.white,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
   },
-  badgeText: { fontWeight: '900', fontSize: 17, color: '#1c1c1c' },
-  name: { fontSize: 19, fontWeight: '800', color: '#1c1c1c' },
-  sub: { fontSize: 12, color: '#555', marginTop: 2 },
-  close: { fontSize: 18, color: '#777', paddingHorizontal: 4 },
+  badgeText: { fontFamily: FONT_TITLE, fontSize: 12, color: PALETTE.ink },
+  name: { fontFamily: FONT_TITLE, fontSize: 12, lineHeight: 18, color: PALETTE.white },
+  sub: { fontFamily: FONT_BODY, fontSize: 18, color: '#b7c0d8' },
+  close: { fontFamily: FONT_TITLE, fontSize: 12, color: PALETTE.white, padding: 4 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
-  chip: { backgroundColor: LINE_COLORS.Green, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  chipText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  chip: { backgroundColor: PALETTE.green, borderWidth: 2, borderColor: PALETTE.greenLight, paddingHorizontal: 6, paddingVertical: 4 },
+  chipText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.white },
+  body: { fontFamily: FONT_BODY, fontSize: 19, color: PALETTE.ink },
+  dim: { color: '#6b7393' },
+
+  button: { backgroundColor: PALETTE.white, borderWidth: 3, borderColor: PALETTE.ink },
+  buttonUp: { boxShadow: `3px 3px 0px ${PALETTE.ink}` },
+  buttonPressed: { transform: [{ translateX: 3 }, { translateY: 3 }], backgroundColor: PALETTE.gold },
+
   pad: { marginTop: 12, gap: 6 },
   middleRow: { flexDirection: 'row', gap: 6 },
-  cell: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F2F5F3',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  cell_up: { alignSelf: 'center', minWidth: '60%' },
-  cell_down: { alignSelf: 'center', minWidth: '60%' },
-  arrow: { fontSize: 16, fontWeight: '900', color: LINE_COLORS.Green, width: 16 },
-  none: { color: '#aaa' },
-  neighbor: { backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#d6e3da', flexShrink: 1 },
-  junction: { marginTop: 12, gap: 6 },
-  junctionPrompt: { fontSize: 13, fontWeight: '700', color: '#444', marginBottom: 2 },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F2F5F3',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: '#d6e3da',
-  },
-  optionPressed: { opacity: 0.6 },
-  optionBranches: { flexDirection: 'row', gap: 3, minWidth: 26 },
-  branchDot: {
+  cell: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cellCenter: { justifyContent: 'center' },
+  arrow: { fontSize: 14, color: PALETTE.gold, width: 16, textAlign: 'center' },
+  neighbor: { paddingHorizontal: 6, paddingVertical: 1, flexShrink: 1 },
+
+  junction: { marginTop: 12, gap: 8 },
+  prompt: { fontFamily: FONT_TITLE, fontSize: 8, lineHeight: 12, color: PALETTE.gold, marginBottom: 2 },
+  option: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingVertical: 6 },
+  optionBranches: { flexDirection: 'row', gap: 3, minWidth: 24 },
+  branchTile: {
     width: 22,
     height: 22,
-    borderRadius: 11,
-    backgroundColor: LINE_COLORS.Green,
+    backgroundColor: PALETTE.green,
+    borderWidth: 2,
+    borderColor: PALETTE.greenDark,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  branchDotText: { color: '#fff', fontWeight: '900', fontSize: 12 },
-  optionName: { fontSize: 15, fontWeight: '700', color: '#1c1c1c' },
-  optionToward: { fontSize: 12, color: '#666', marginTop: 1 },
-  optionChevron: { fontSize: 22, color: LINE_COLORS.Green, fontWeight: '700' },
-  backButton: {
-    alignItems: 'center',
-    borderRadius: 12,
-    paddingVertical: 9,
-    borderWidth: 1.5,
-    borderColor: '#bbb',
-    borderStyle: 'dashed',
-    marginTop: 2,
-  },
-  backText: { fontSize: 14, fontWeight: '700', color: '#444' },
-  neighborText: { fontSize: 12, fontWeight: '600', color: '#1c1c1c' },
+  branchTileText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
+  optionName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
+  optionToward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
+  cursor: { fontSize: 14, color: PALETTE.ink },
+  back: { alignItems: 'center', paddingVertical: 8, backgroundColor: '#c9cfe0' },
+  backText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.ink },
 });
