@@ -40,7 +40,7 @@ const LETTERS = {
 
 /**
  * Kenmore Square's Citgo sign: a big triangle over smaller CITGO lettering, on a
- * steel frame atop a brick roof. Also returns which rows are the lit sign face.
+ * steel frame atop a brick roof. Also returns which rows hold the triangle (the part that lights up).
  */
 function citgoSign() {
   const word = 'CITGO';
@@ -53,10 +53,10 @@ function citgoSign() {
   const blank = (x) => (edge(x) ? 'K' : 'W');
 
   line(() => 'K');
-  const faceStart = rows.length;
   line(blank);
-  // the triangle fills almost the whole width: red edge, orange inside
+  // the triangle fills almost the whole width: dark red edge, medium red inside
   const TRI = mid - 1; // rows; base is 2*TRI-1 wide
+  const triStart = rows.length;
   for (let r = 0; r < TRI; r++) {
     line((x) => {
       if (edge(x)) return 'K';
@@ -66,6 +66,7 @@ function citgoSign() {
       return inside ? 'O' : 'R';
     });
   }
+  const triEnd = rows.length;
   line(blank);
   // CITGO in blue, smaller than the triangle
   const pad = Math.floor((W - textWidth) / 2);
@@ -79,7 +80,6 @@ function citgoSign() {
     line((x) => (edge(x) ? 'K' : x - pad >= 0 && x - pad < text.length ? text[x - pad] : 'W'));
   }
   line(blank);
-  const faceEnd = rows.length;
   line(() => 'K');
   // steel frame: two legs per side with cross braces
   const legs = [3, 6, W - 7, W - 4];
@@ -95,7 +95,7 @@ function citgoSign() {
   line((x) => (edge(x) ? 'K' : 'N'));
   line((x) => (edge(x) ? 'K' : x % 3 === 1 ? 'M' : 'N'));
   line((x) => (edge(x) ? 'K' : 'N'));
-  return { rows, faceStart, faceEnd };
+  return { rows, triStart, triEnd };
 }
 
 const CITGO = citgoSign();
@@ -111,16 +111,17 @@ const CDS_COLORS = {
 const CITGO_COLORS = {
   K: PALETTE.ink,
   W: '#f4f4f4', // sign face
-  R: '#ff3b2f', // triangle red (lit)
-  O: '#ffa126', // triangle orange (lit)
+  // official CITGO reds (CITGO Logo Guidelines)
+  R: '#B8292F', // triangle edge: Dark Red, Pantone 187 C, RGB 184/41/47
+  O: '#E32026', // triangle fill: Medium Red, Pantone 185 C, RGB 227/32/38
   B: '#2b4fb3', // CITGO lettering
   S: '#6b7393', // steel frame
   N: '#9b4a35', // brick
   M: '#ffd23f', // lit windows
 };
 
-// The same sign with its lights off.
-const CITGO_UNLIT = { W: '#aeb3bf', R: '#7a3532', O: '#8a5a33', B: '#3e4a78' };
+// The triangle with its lights off. The white face and lettering never change.
+const CITGO_UNLIT = { R: '#5c1f22', O: '#7a2428' };
 
 /** Undiscovered landmarks: outline stays, everything else turns a dark slate. */
 export function silhouetteOf(colors) {
@@ -161,8 +162,8 @@ export const landmarks = [
     fact: 'It rises just beyond Fenway Park\'s Green Monster, so it shows up on TV during Red Sox games.',
     colors: CITGO_COLORS,
     sprite: CITGO.rows,
-    // the real sign's lights come on from the top down, then it starts over
-    lightUp: { from: CITGO.faceStart, to: CITGO.faceEnd, unlit: CITGO_UNLIT },
+    // the triangle's lights come on from the top down, then it starts over
+    lightUp: { from: CITGO.triStart, to: CITGO.triEnd, unlit: CITGO_UNLIT },
   },
 ];
 
