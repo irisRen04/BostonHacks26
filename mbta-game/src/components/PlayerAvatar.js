@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 
 import { AvatarPaths } from './AvatarSprite';
 
-const SPRITE_PX = 3;
-export const PLAYER_HEIGHT = 16 * SPRITE_PX;
+const SPRITE_PX = 4;
+const HEAD_ROWS = 9; // the head-only avatar sprite is 12x9 pixels
+export const PLAYER_HEIGHT = HEAD_ROWS * SPRITE_PX;
 
-/** The rider's avatar standing over the current stop, bobbing on a two-frame loop. */
+/** The rider's avatar head floating over the current stop, bobbing on a two-frame loop. */
 export default function PlayerAvatar({ avatar, x, y }) {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
@@ -13,5 +14,14 @@ export default function PlayerAvatar({ avatar, x, y }) {
     return () => clearInterval(id);
   }, []);
 
-  return <AvatarPaths avatar={avatar} x={x} y={y} px={SPRITE_PX} transform={`translate(0 ${frame * -SPRITE_PX})`} />;
+  return (
+    <AvatarPaths
+      avatar={avatar}
+      x={x}
+      y={y}
+      px={SPRITE_PX}
+      headOnly
+      transform={`translate(0 ${frame * -SPRITE_PX})`}
+    />
+  );
 }

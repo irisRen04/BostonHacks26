@@ -173,13 +173,20 @@ function applyLayer(rows, layer) {
   }
 }
 
-/** Build the sprite rows and colour key for an avatar config. */
-export function buildAvatarSprite(config) {
+// Rows 0-8 are the head (with hair, hat and glasses); row 8 is the chin.
+const HEAD_ROWS = 9;
+
+/**
+ * Build the sprite rows and colour key for an avatar config.
+ * With `headOnly`, the body is dropped and the neck is closed off with outline.
+ */
+export function buildAvatarSprite(config, { headOnly = false } = {}) {
   const a = sanitizeAvatar(config);
   const rows = [...BODY];
   applyLayer(rows, HAIR_LAYERS[a.hair]);
   applyLayer(rows, GLASSES_LAYERS[a.glasses]);
   applyLayer(rows, HAT_LAYERS[a.hat]);
+  const sprite = headOnly ? rows.slice(0, HEAD_ROWS).map((r, y) => (y === HEAD_ROWS - 1 ? r.replace(/S/g, 'O') : r)) : rows;
   const colors = {
     O: PALETTE.ink,
     S: pick('skin', a.skin).color,
@@ -193,5 +200,5 @@ export function buildAvatarSprite(config) {
     W: PALETTE.white,
     Y: PALETTE.gold,
   };
-  return { rows, colors };
+  return { rows: sprite, colors };
 }
