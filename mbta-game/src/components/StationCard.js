@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
+import NextTrains from './NextTrains';
 import { PixelButton, ui } from './ui';
 
 /**
@@ -139,7 +140,7 @@ function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
-export default function StationCard({ station, previousId, activeSignId, onSelect, onClose, onLayout }) {
+export default function StationCard({ station, previousId, activeSignId, arrivals, watchedId, onWatch, onSelect, onClose, onLayout }) {
   return (
     <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
@@ -167,6 +168,8 @@ export default function StationCard({ station, previousId, activeSignId, onSelec
           </View>
         ))}
       </View>
+
+      <NextTrains arrivals={arrivals.arrivals} status={arrivals.status} watchedId={watchedId} onWatch={onWatch} />
 
       {isJunction(station.id) ? (
         <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />

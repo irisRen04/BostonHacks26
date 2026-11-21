@@ -10,6 +10,7 @@ import GameMenu from './src/components/GameMenu';
 import LandmarkCard, { DiscoveryPopup } from './src/components/LandmarkCard';
 import LeaderboardScreen from './src/components/LeaderboardScreen';
 import StationCard from './src/components/StationCard';
+import TrainCard from './src/components/TrainCard';
 import TransitMap from './src/components/TransitMap';
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
@@ -23,6 +24,7 @@ import { syncPlayer } from './src/services/leaderboard';
 import { formatDistance } from './src/services/proximity';
 import { rideBetween } from './src/services/ride';
 import { landmarksAtStop } from './src/services/xp';
+import { useArrivals, useLiveTrains } from './src/live/mbta';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 // "Park Street" vs "park st." shouldn't break name matching
@@ -46,7 +48,36 @@ export default function App() {
   const [screen, setScreen] = useState(null);
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
-  const menuBottom = selected || landmark ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
+  // Live Green Line trains, and the one whose card is open.
+  const live = useLiveTrains();
+  const [trainId, setTrainId] = useState(null);
+  const train = trainId ? live.trains.find((t) => t.id === trainId) : null;
+
+  // The train you're waiting for at your stop: the arrival you tapped on the NEXT TRAINS
+  // board, or else the soonest one that's on the map. Only that train pulses.
+  const arrivals = useArrivals(selectedId);
+  const [watchId, setWatchId] = useState(null);
+  useEffect(() => setWatchId(null), [selectedId]);
+  const watched = useMemo(() => {
+    const onMap = new Set(live.trains.map((t) => t.id));
+    const list = arrivals.arrivals.filter((a) => a.vehicleId && onMap.has(a.vehicleId));
+    return list.find((a) => a.id === watchId) ?? list[0] ?? null;
+  }, [arrivals.arrivals, live.trains, watchId]);
+  const waitingFor = watched ? { trainId: watched.vehicleId, minutes: watched.minutes } : null;
+
+  // Fewer trains on the map: with a stop selected, only trains on its branches or close by
+  // (plus your train and the one whose card is open). With no stop, every train shows.
+  const visibleTrains = useMemo(() => {
+    if (!selected) return live.trains;
+    return live.trains.filter(
+      (t) =>
+        t.id === waitingFor?.trainId ||
+        t.id === trainId ||
+        selected.branches.includes(t.branch) ||
+        Math.hypot(t.to.x - selected.x, t.to.y - selected.y) < NEARBY_M,
+    );
+  }, [live.trains, selected, waitingFor?.trainId, trainId]);
+  const menuBottom = selected || landmark || train ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
   const [activeSignId, setActiveSignId] = useState(null);
@@ -55,6 +86,7 @@ export default function App() {
   const placeAt = useCallback((id) => {
     setActiveSignId(null);
     setLandmarkId(null);
+    setTrainId(null);
     setTrip({ currentId: id, previousId: null });
     if (id) mapRef.current?.focusStation(stationsById[id]);
   }, []);
@@ -63,6 +95,7 @@ export default function App() {
   const rideTo = useCallback((id) => {
     setActiveSignId(null);
     setLandmarkId(null);
+    setTrainId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
@@ -155,6 +188,7 @@ export default function App() {
   }, [selectedId, discovered, discover]);
 
   const openLandmark = useCallback((id) => {
+    setTrainId(null);
     setLandmarkId(id);
     mapRef.current?.focusStation(landmarksById[id]);
   }, []);
@@ -192,6 +226,14 @@ export default function App() {
           onSignPress={pressSign}
           discovered={discovered}
           onLandmarkPress={openLandmark}
+          openLandmarkId={landmarkId}
+          liveTrains={visibleTrains}
+          waitingFor={waitingFor}
+          selectedTrainId={trainId}
+          onTrainPress={(id) => {
+            setLandmarkId(null);
+            setTrainId(id);
+          }}
         />
 
         <View style={styles.header} pointerEvents="none">
@@ -199,6 +241,7 @@ export default function App() {
             <Text style={styles.lineBadgeText}>GL</Text>
           </View>
           <Text style={styles.title}>GREEN LINE</Text>
+          <LiveBadge status={live.status} count={live.trains.length} />
         </View>
 
         {/* XP bar */}
@@ -243,9 +286,18 @@ export default function App() {
           <ZoomButton label="[]" onPress={() => mapRef.current?.reset()} />
         </View>
 
-        {!selected && !landmark && <StartHint />}
+        {!selected && !landmark && !train && <StartHint />}
 
-        {landmark && (
+        {train && (
+          <TrainCard
+            train={train}
+            onGoToStop={placeAt}
+            onClose={() => setTrainId(null)}
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+          />
+        )}
+
+        {landmark && !train && (
           <LandmarkCard
             landmark={landmark}
             discovered={!!discovered[landmark.id]}
@@ -256,11 +308,14 @@ export default function App() {
           />
         )}
 
-        {selected && !landmark && (
+        {selected && !landmark && !train && (
           <StationCard
             station={selected}
             previousId={trip.previousId}
             activeSignId={activeSignId}
+            arrivals={arrivals}
+            watchedId={watched?.id}
+            onWatch={setWatchId}
             onSelect={rideTo}
             onClose={() => placeAt(null)}
             onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
@@ -316,6 +371,17 @@ function ZoomButton({ label, onPress }) {
   );
 }
 
+/** "● LIVE 49" in the header while live trains are coming in; grey when the MBTA can't be reached. */
+function LiveBadge({ status, count }) {
+  const live = status === 'live';
+  return (
+    <View style={styles.liveBadge}>
+      <Text style={[styles.liveDot, { color: live ? '#ff5d5d' : '#8f98b5' }]}>●</Text>
+      <Text style={styles.liveText}>{live ? `LIVE ${count}` : status === 'loading' ? '...' : 'OFFLINE'}</Text>
+    </View>
+  );
+}
+
 /** Blinking "press start" prompt shown until the rider picks a stop. */
 function StartHint() {
   const [on, setOn] = useState(true);
@@ -332,7 +398,11 @@ function StartHint() {
 }
 
 const isWeb = Platform.OS === 'web';
+const TOP = isWeb ? 16 : 56;      // header
+const XP_TOP = TOP + 56;          // XP box sits below the header
+const DIST_TOP = XP_TOP + 76;     // nearest-stop box sits below the XP box
 const CARD_BOTTOM = 16; // matches StationCard's bottom offset
+const NEARBY_M = 1500; // trains within this many meters of your stop stay on the map
 
 const styles = StyleSheet.create({
   // On the web, show the app inside a phone-sized frame; on devices it fills the screen.
@@ -360,25 +430,25 @@ const styles = StyleSheet.create({
     paddingLeft: 6,
     paddingRight: 12,
   },
-  xpBar: {
+ xpBar: {
     position: 'absolute',
-    top: isWeb ? 16 : 56,
-    left: 176,
-    right: 66,
+    top: XP_TOP,
+    left: 14,
+    width: 200,
     backgroundColor: PALETTE.night,
     borderWidth: 3,
     borderColor: PALETTE.panelEdge,
     boxShadow: `4px 4px 0px ${PALETTE.ink}`,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
   },
   xpLevel: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.gold },
   xpTrack: { height: 6, backgroundColor: PALETTE.ink, marginVertical: 3 },
   xpFill: { height: 6, backgroundColor: PALETTE.green },
   xpText: { fontFamily: FONT_BODY, fontSize: 15, color: '#b7c0d8' },
-  distBadge: {
+ distBadge: {
     position: 'absolute',
-    top: isWeb ? 64 : 104,
+    top: DIST_TOP,
     left: 14,
     backgroundColor: PALETTE.night,
     borderWidth: 3,
@@ -400,6 +470,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   lineBadgeText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
+  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 4 },
+  liveDot: { fontSize: 10 },
+  liveText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.white },
   title: { fontFamily: FONT_TITLE, fontSize: 11, color: PALETTE.white },
   zoom: { position: 'absolute', right: 16, top: isWeb ? 16 : 56, gap: 10 },
   zoomBtn: {

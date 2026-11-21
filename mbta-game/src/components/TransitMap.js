@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, StyleSheet, View } from 'react-native';
-import Svg, { Defs, G, Path, Pattern, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Defs, Ellipse, G, Path, Pattern, RadialGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
 
 import { greenBounds, stations, stationsById, tracks } from '../data/greenLine';
 import {
@@ -23,8 +23,9 @@ import { landmarks } from '../data/landmarks';
 import parks from '../data/parks.json';
 import sea from '../data/sea.json';
 import water from '../data/water.json';
+import LiveTrains from './LiveTrains';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
-import { AnimatedLandmarkPaths } from './LandmarkSprite';
+import { AnimatedLandmarkPaths, LANDMARK_PIN, LandmarkPin } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
@@ -32,7 +33,14 @@ const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
 const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
-const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far
+const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far...
+const PIN_UNTIL = 0.25; // ...as small pins, until you're close enough for the building to fit
+
+// How a landmark is drawn at this zoom: a pin, or its building growing from 1 to 3 points per pixel.
+function landmarkLook(scale) {
+  if (scale < PIN_UNTIL) return { pin: true, px: 2 };
+  return { pin: false, px: scale < 0.6 ? 2 : 3 }; // buildings start at 2 points per pixel
+}
 
 // Chunkier track and bigger stop sprites as you zoom in.
 function zoomStyle(scale) {
@@ -112,7 +120,21 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * current stop (see JunctionSigns). Tapping a sign calls onSignPress(neighbourId).
  */
 const TransitMap = forwardRef(function TransitMap(
-  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress, discovered, onLandmarkPress },
+  {
+    selectedId,
+    onSelectStation,
+    avatar,
+    signs,
+    activeSignId,
+    onSignPress,
+    discovered,
+    onLandmarkPress,
+    openLandmarkId,
+    liveTrains = [],
+    waitingFor,
+    selectedTrainId,
+    onTrainPress,
+  },
   ref,
 ) {
   const [size, setSize] = useState(null);
@@ -131,6 +153,9 @@ const TransitMap = forwardRef(function TransitMap(
   const onLandmarkRef = useRef(onLandmarkPress);
   onLandmarkRef.current = onLandmarkPress;
   const landmarkHitsRef = useRef([]);
+  const onTrainRef = useRef(onTrainPress);
+  onTrainRef.current = onTrainPress;
+  const trainHitsRef = useRef([]);
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
@@ -176,11 +201,11 @@ const TransitMap = forwardRef(function TransitMap(
     },
   }));
 
-  const hitTest = useCallback((px, py) => {
+  const hitTest = useCallback((px, py, radius = HIT_RADIUS) => {
     const cam = cameraRef.current;
     const sz = sizeRef.current;
     let best = null;
-    let bestD = HIT_RADIUS;
+    let bestD = radius;
     for (const s of stations) {
       const sx = (s.x - cam.cx) * cam.scale + sz.width / 2;
       const sy = (cam.cy - s.y) * cam.scale + sz.height / 2;
@@ -257,12 +282,18 @@ const TransitMap = forwardRef(function TransitMap(
       onPanResponderRelease: () => {
         const g = gesture.current;
         if (g && !g.moved && g.tap) {
+          // what was tapped, most specific first: a sign, right on a stop, a train, a landmark, near a stop
+          const inBox = (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1;
           const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
-          const landmark = sign ? null : landmarkHitsRef.current.find(
-            (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1,
-          );
+          const exactStop = sign ? null : hitTest(g.tap.x, g.tap.y, 10);
+          const train = sign || exactStop ? null : trainHitsRef.current.find(inBox);
+          const landmark = sign || exactStop || train ? null : landmarkHitsRef.current.find(inBox);
           if (sign) {
             onSignRef.current?.(sign.id);
+          } else if (exactStop) {
+            onSelectRef.current?.(exactStop.id);
+          } else if (train) {
+            onTrainRef.current?.(train.id);
           } else if (landmark) {
             onLandmarkRef.current?.(landmark.id);
           } else {
@@ -372,27 +403,30 @@ const TransitMap = forwardRef(function TransitMap(
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
     // landmarks, bottom-centre on their real location, only when zoomed in
-    const landmarkPx = scale < 0.3 ? 2 : 3;
-    const placedLandmarks =
-      scale < LANDMARK_SCALE
-        ? []
-        : landmarks
+    const look = landmarkLook(scale);
+    // the landmark whose card is open is always shown, as its full building at the largest size
+    const placedLandmarks = landmarks
+            .filter((lm) => scale >= LANDMARK_SCALE || lm.id === openLandmarkId)
             .map((lm) => {
               const x = Math.round(lm.x * scale + OX);
               const y = Math.round(-lm.y * scale + OY);
-              const w = lm.sprite[0].length * landmarkPx;
-              const h = lm.sprite.length * landmarkPx;
-              return { landmark: lm, x, y, w, h, px: landmarkPx, // the nameplate to the right of the sprite is tappable too
+              const open = lm.id === openLandmarkId;
+              const here = open ? { pin: false, px: 3 } : look;
+              const art = here.pin ? LANDMARK_PIN : lm.sprite;
+              const w = art[0].length * here.px;
+              const h = art.length * here.px;
+              return { landmark: lm, x, y, w, h, px: here.px, pin: here.pin, open, // the nameplate to the right of the sprite is tappable too
               hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 } };
             })
             .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
 
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
-    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks };
-  }, [camera, size]);
+    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks, OX, OY };
+  }, [camera, size, openLandmarkId]);
 
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
+  if (!liveTrains.length) trainHitsRef.current = []; // no trains drawn, nothing to tap
   const current = projected?.stops.find((p) => p.station.id === selectedId);
 
   // Junction signposts, laid out around the current stop toward each neighbour.
@@ -404,6 +438,75 @@ const TransitMap = forwardRef(function TransitMap(
   placedSignsRef.current = placedSigns;
   landmarkHitsRef.current = projected ? projected.placedLandmarks.map((p) => p.hit) : [];
   const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
+
+  // ---- labels: gather every candidate, then place them in priority order. Each label
+  // tries the right of its stop first, then the left; if both would overlap a label
+  // already placed it's skipped (it comes back when you zoom in). Ties in priority go
+  // to the label nearest the middle of the screen.
+  const placedLabels = [];
+  if (projected) {
+    const labelWidth = (text) => text.length * LABEL_SIZE + 8;
+    const candidates = [];
+    for (const { station, x, y } of projected.stops) {
+      const important = station.terminus || station.transfers.length > 0 || station.name === 'Kenmore';
+      if (!(showAllLabels || important || station.id === selectedId)) continue;
+      const text = station.name.toUpperCase();
+      if (placedSigns.length && station.id !== selectedId) {
+        // while junction signs are up, keep labels clear of the junction so the signs read clearly
+        const right = x + projected.spriteHalf + 4 + labelWidth(text);
+        const nx = Math.min(Math.max(current.x, x), right);
+        const ny = Math.min(Math.max(current.y, y - 8), y + 8);
+        if (Math.hypot(nx - current.x, ny - current.y) <= SIGN_CLEAR_RADIUS) continue;
+      }
+      candidates.push({
+        key: `l-${station.id}`,
+        ax: x,
+        y: Math.round(y),
+        gap: projected.spriteHalf + 4, // room for the stop icon between it and the label
+        text,
+        active: station.id === selectedId,
+        priority: station.id === selectedId ? 0 : important ? 1 : 4,
+      });
+    }
+    for (const { landmark, x, y, w, h } of projected.placedLandmarks) {
+      const known = !!discovered?.[landmark.id];
+      candidates.push({
+        key: `lm-${landmark.id}`,
+        ax: x,
+        y: Math.round(y - h + 8),
+        gap: w / 2 + 2,
+        text: known ? `★ ${landmark.shortName}` : '???',
+        active: known,
+        priority: known ? 2 : 3,
+      });
+    }
+    const cx = size.width / 2;
+    const cy = size.height / 2;
+    const fromCenter = (c) => Math.hypot(c.ax - cx, c.y - cy);
+    candidates.sort((p, q) => p.priority - q.priority || fromCenter(p) - fromCenter(q));
+    const boxes = [];
+    const PAD = 2;
+    const overlaps = (box) => boxes.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0);
+    for (const c of candidates) {
+      const w = labelWidth(c.text);
+      const y0 = c.y - LABEL_SIZE / 2 - 4 - PAD;
+      const y1 = c.y + LABEL_SIZE / 2 + 4 + PAD;
+      // right of the stop first, then the left
+      const spots = [Math.round(c.ax + c.gap), Math.round(c.ax - c.gap - w)];
+      let placed = null;
+      for (const x of spots) {
+        const box = { x0: x - PAD, x1: x + w + PAD, y0, y1 };
+        if (box.x1 < 0 || box.x0 > size.width || y1 < 0 || y0 > size.height) continue;
+        if (c.priority === 0 || !overlaps(box)) {
+          placed = { x, box };
+          break;
+        }
+      }
+      if (!placed) continue;
+      boxes.push(placed.box);
+      placedLabels.push({ ...c, x: placed.x });
+    }
+  }
 
   return (
     <View ref={containerRef} style={styles.container} onLayout={onLayout} {...responder.panHandlers}>
@@ -423,6 +526,10 @@ const TransitMap = forwardRef(function TransitMap(
                 <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
               ))}
             </Pattern>
+            <RadialGradient id="landmarkGlow" cx="50%" cy="50%" r="50%">
+              <Stop offset="0%" stopColor={PALETTE.gold} stopOpacity={0.7} />
+              <Stop offset="100%" stopColor={PALETTE.gold} stopOpacity={0} />
+            </RadialGradient>
             <Pattern
               id="parkland"
               patternUnits="userSpaceOnUse"
@@ -474,50 +581,53 @@ const TransitMap = forwardRef(function TransitMap(
           {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
 
           {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
-          {projected.placedLandmarks.map(({ landmark, x, y, px }) => (
-            <AnimatedLandmarkPaths key={landmark.id} landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
-          ))}
+          {projected.placedLandmarks.filter((p) => !p.open).map(({ landmark, x, y, px, pin }) => {
+            const known = !!discovered?.[landmark.id];
+            return pin ? (
+              <LandmarkPin key={landmark.id} x={x} y={y} px={px} discovered={known} />
+            ) : (
+              // undiscovered buildings are faded so they tease rather than compete
+              <G key={landmark.id} opacity={known ? 1 : 0.6}>
+                <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={known} />
+              </G>
+            );
+          })}
 
           {/* stop sprites */}
           {projected.spritePaths.map(({ color, d }) => (
             <Path key={color} d={d} fill={color} />
           ))}
 
-          {/* nameplates */}
-          {projected.stops
-            .filter(
-              ({ station }) =>
-                showAllLabels || station.terminus || station.transfers.length > 0 || station.id === selectedId || station.name === 'Kenmore',
-            )
-            // while junction signs are up, clear nameplates around the junction so the signs read clearly
-            .filter(({ station, x, y }) => {
-              if (!placedSigns.length) return true;
-              // nearest point of the nameplate box to the junction
-              const left = x;
-              const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
-              const nx = Math.min(Math.max(current.x, left), right);
-              const ny = Math.min(Math.max(current.y, y - 8), y + 8);
-              return Math.hypot(nx - current.x, ny - current.y) > SIGN_CLEAR_RADIUS;
-            })
-            .map(({ station, x, y }) => (
-              <Nameplate
-                key={`l-${station.id}`}
-                x={Math.round(x + projected.spriteHalf + 4)}
-                y={Math.round(y)}
-                text={station.name.toUpperCase()}
-                active={station.id === selectedId}
-              />
+          {/* live trains (from the MBTA API) */}
+          {liveTrains.length > 0 && (
+            <LiveTrains
+              trains={liveTrains}
+              scale={scale}
+              OX={projected.OX}
+              OY={projected.OY}
+              width={size.width}
+              height={size.height}
+              selectedId={selectedTrainId}
+              waitingFor={waitingFor}
+              hitsRef={trainHitsRef}
+            />
+          )}
+
+          {/* the open landmark, big and on top, with a soft gold glow at its base */}
+          {projected.placedLandmarks
+            .filter((p) => p.open)
+            .map(({ landmark, x, y, w, px }) => (
+              <G key={`open-${landmark.id}`}>
+                <Ellipse cx={x} cy={y} rx={w * 0.75} ry={px * 5} fill="url(#landmarkGlow)" />
+                <G opacity={discovered?.[landmark.id] ? 1 : 0.85}>
+                  <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
+                </G>
+              </G>
             ))}
 
-          {/* landmark nameplates */}
-          {projected.placedLandmarks.map(({ landmark, x, y, w, h }) => (
-            <Nameplate
-              key={`lm-${landmark.id}`}
-              x={Math.round(x + w / 2 + 2)}
-              y={Math.round(y - h + 8)}
-              text={discovered?.[landmark.id] ? `★ ${landmark.shortName}` : '???'}
-              active={!!discovered?.[landmark.id]}
-            />
+          {/* nameplates for stops and landmarks, overlapping ones left out (see placedLabels) */}
+          {placedLabels.map((l) => (
+            <Nameplate key={l.key} x={l.x} y={l.y} text={l.text} active={l.active} />
           ))}
 
           {/* the rider */}
