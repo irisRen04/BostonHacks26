@@ -40,7 +40,8 @@ const LETTERS = {
 
 /**
  * Kenmore Square's Citgo sign: a big triangle over smaller CITGO lettering, on a
- * steel frame atop a brick roof. Also returns which rows hold the triangle (the part that lights up).
+ * steel frame atop a brick roof. Also returns, for each triangle pixel, which ring it
+ * is in (0 = outer edge, counting inward) so the lights can come on from the outside in.
  */
 function citgoSign() {
   const word = 'CITGO';
@@ -57,7 +58,12 @@ function citgoSign() {
   // the triangle fills almost the whole width: dark red edge, medium red inside
   const TRI = mid - 1; // rows; base is 2*TRI-1 wide
   const triStart = rows.length;
+  const ringAt = {}; // "x,y" -> ring number
   for (let r = 0; r < TRI; r++) {
+    for (let x = mid - r; x <= mid + r; x++) {
+      // pixels in from the nearest slanted side, or up from the bottom edge
+      ringAt[`${x},${triStart + r}`] = Math.min(r - Math.abs(x - mid), TRI - 1 - r);
+    }
     line((x) => {
       if (edge(x)) return 'K';
       const d = Math.abs(x - mid);
@@ -66,7 +72,6 @@ function citgoSign() {
       return inside ? 'O' : 'R';
     });
   }
-  const triEnd = rows.length;
   line(blank);
   // CITGO in blue, smaller than the triangle
   const pad = Math.floor((W - textWidth) / 2);
@@ -95,7 +100,8 @@ function citgoSign() {
   line((x) => (edge(x) ? 'K' : 'N'));
   line((x) => (edge(x) ? 'K' : x % 3 === 1 ? 'M' : 'N'));
   line((x) => (edge(x) ? 'K' : 'N'));
-  return { rows, triStart, triEnd };
+  const rings = Math.max(...Object.values(ringAt)) + 1;
+  return { rows, rings, ringOf: (x, y) => ringAt[`${x},${y}`] ?? -1 };
 }
 
 const CITGO = citgoSign();
@@ -162,8 +168,8 @@ export const landmarks = [
     fact: 'It rises just beyond Fenway Park\'s Green Monster, so it shows up on TV during Red Sox games.',
     colors: CITGO_COLORS,
     sprite: CITGO.rows,
-    // the triangle's lights come on from the top down, then it starts over
-    lightUp: { from: CITGO.triStart, to: CITGO.triEnd, unlit: CITGO_UNLIT },
+    // the triangle's lights come on ring by ring from the outside in, then it starts over
+    lightUp: { steps: CITGO.rings, stepOf: CITGO.ringOf, stepMs: 160, unlit: CITGO_UNLIT },
   },
 ];
 
