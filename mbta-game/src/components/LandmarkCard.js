@@ -55,7 +55,7 @@ export default function LandmarkCard({ landmark, discovered, atNearestStop, onGo
 }
 
 /** Celebration shown the first time a rider reaches a landmark's stop. */
-export function DiscoveryPopup({ landmark, onClose }) {
+export function DiscoveryPopup({ landmark, remaining = 0, onClose }) {
   return (
     <View style={styles.popupBackdrop}>
       <View style={[ui.panel, styles.popup]}>
@@ -66,7 +66,7 @@ export function DiscoveryPopup({ landmark, onClose }) {
         <Text style={styles.popupName}>{landmark.name.toUpperCase()}</Text>
         <Text style={styles.text}>Added to Places to visit.</Text>
         <PixelButton onPress={onClose} style={styles.ok}>
-          <Text style={styles.goText}>OK</Text>
+          <Text style={styles.goText}>{remaining > 0 ? `NEXT (${remaining} MORE) ▶` : 'OK'}</Text>
         </PixelButton>
       </View>
     </View>

@@ -25,9 +25,9 @@ export default function App() {
   const selected = selectedId ? stationsById[selectedId] : null;
   const [avatar, setAvatar] = useAvatar();
   const [discovered, discover] = useDiscoveries();
-  // Landmark whose card is open, and one that was just discovered (shows the popup).
+  // Landmark whose card is open, and newly discovered ones waiting for their popup.
   const [landmarkId, setLandmarkId] = useState(null);
-  const [justDiscoveredId, setJustDiscoveredId] = useState(null);
+  const [discoveryQueue, setDiscoveryQueue] = useState([]);
   const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
@@ -54,14 +54,13 @@ export default function App() {
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
 
-  // Arriving at a landmark's nearest stop discovers it.
+  // Arriving at a stop discovers every landmark whose nearest stop it is (one popup each).
   useEffect(() => {
     if (!selectedId) return;
-    const found = landmarks.find((l) => l.nearestStop === selectedId && !discovered[l.id]);
-    if (found) {
-      discover(found.id);
-      setJustDiscoveredId(found.id);
-    }
+    const found = landmarks.filter((l) => l.nearestStop === selectedId && !discovered[l.id]).map((l) => l.id);
+    if (!found.length) return;
+    found.forEach(discover);
+    setDiscoveryQueue((q) => [...q, ...found.filter((id) => !q.includes(id))]);
   }, [selectedId, discovered, discover]);
 
   const openLandmark = useCallback((id) => {
@@ -158,8 +157,13 @@ export default function App() {
         )}
         {(screen === 'friends' || screen === 'settings') && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
 
-        {justDiscoveredId && (
-          <DiscoveryPopup landmark={landmarksById[justDiscoveredId]} onClose={() => setJustDiscoveredId(null)} />
+        {discoveryQueue.length > 0 && (
+          <DiscoveryPopup
+            key={discoveryQueue[0]}
+            landmark={landmarksById[discoveryQueue[0]]}
+            remaining={discoveryQueue.length - 1}
+            onClose={() => setDiscoveryQueue((q) => q.slice(1))}
+          />
         )}
       </View>
       <StatusBar style="dark" />
