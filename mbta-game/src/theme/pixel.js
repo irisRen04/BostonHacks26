@@ -80,41 +80,71 @@ export const STOP_SPRITE_SMALL = ['.KKK.', 'KWWWK', 'KWGWK', 'KWWWK', '.KKK.'];
 export const TRANSFER_SPRITE_SMALL = ['.KKK.', 'KYYYK', 'KYGYK', 'KYYYK', '.KKK.'];
 
 /**
- * A live Green Line train seen from above: the roof of a two-section articulated
- * car pointing RIGHT (+x), with the bellows joint, air-conditioning units, the
- * pantograph on the front car, headlights at the front and tail lights at the back.
- * Built from a layout so every row is exactly the same width.
+ * A live Green Line train seen from above, pointing RIGHT (+x): a two-section
+ * articulated car with side windows along both edges, a windshield at each end
+ * (headlights in the front corners, tail lights at the back), a ribbed rubber
+ * bellows in the middle, AC units with grilles and roof vents on the rear car,
+ * and a pantograph on the front car. Built from a layout so every row is the same width.
  */
 function buildTrain() {
-  const SECTION = 11; // roof columns per car section
+  const SECTION = 13; // body columns per car section
+  const H = 11; // rows: outline, windows, lit edge, 5 roof rows, shaded edge, windows, outline
   const W = 1 + SECTION + 2 + SECTION + 1;
   const front = 1 + SECTION + 2; // first column of the front car
-  const rows = [];
-  const row = (fn) => rows.push(Array.from({ length: W }, (_, x) => fn(x)).join(''));
-  const joint = (x) => x === 1 + SECTION || x === 2 + SECTION;
-  const body = (x, inner) => (x === 0 || x === W - 1 || joint(x) ? 'K' : inner(x));
-  const ac = (x) => (x >= 3 && x <= 5) || (x >= front + 1 && x <= front + 2); // roof AC units
-  const panto = (x, half) => Math.abs(x - (front + 7)) <= half; // pantograph diamond
-
-  row((x) => (x === 0 || x === W - 1 ? '.' : 'K'));
-  row((x) => body(x, () => 'L')); // sunlit roof edge
-  row((x) => (x === W - 2 ? 'Y' : x === 1 ? 'r' : body(x, (c) => (ac(c) ? 'A' : panto(c, 1) ? 'P' : 'G'))));
-  row((x) => body(x, (c) => (ac(c) ? 'A' : panto(c, 2) ? 'P' : 'G')));
-  row((x) => (x === W - 2 ? 'Y' : x === 1 ? 'r' : body(x, (c) => (ac(c) ? 'A' : panto(c, 1) ? 'P' : 'G'))));
-  row((x) => body(x, () => 'H')); // roof edge in shade
-  row((x) => (x === 0 || x === W - 1 ? '.' : 'K'));
-  return rows;
+  const mid = Math.floor(H / 2);
+  const grid = [];
+  for (let y = 0; y < H; y++) {
+    const line = [];
+    for (let x = 0; x < W; x++) {
+      const edgeRow = y === 0 || y === H - 1;
+      const endCol = x === 0 || x === W - 1;
+      let c;
+      if (edgeRow || endCol) c = (edgeRow && endCol) ? '.' : 'K';
+      else if (x === 1 + SECTION || x === 2 + SECTION) c = y % 2 ? 'b' : 'K'; // ribbed bellows
+      else {
+        const rear = x < front;
+        const i = rear ? x - 1 : x - front; // column within its section
+        const atFrontEnd = !rear && i >= SECTION - 2;
+        const atRearEnd = rear && i <= 1;
+        if (atFrontEnd || atRearEnd) {
+          // cab: windshield, with head/tail lights in the corners
+          if (y === 1 || y === H - 2) c = atFrontEnd ? (i === SECTION - 1 ? 'Y' : 'S') : i === 0 ? 'r' : 'S';
+          else c = y === 3 && (atFrontEnd ? i === SECTION - 2 : i === 1) ? 'R' : 'S';
+        } else if (y === 1 || y === H - 2) {
+          // side windows: panes with frames between, a glint on the top side
+          c = i % 3 === 2 ? 'F' : y === 1 ? (i % 3 === 0 ? 'R' : 'W') : 'w';
+        } else if (y === 2) c = 'L'; // sunlit roof edge
+        else if (y === H - 3) c = 'H'; // roof edge in shade
+        else if (rear && i >= 3 && i <= 6) c = (y === 3 || y === H - 4) ? 'A' : 'a'; // AC unit + grille
+        else if (rear && i === 9 && (y === 4 || y === H - 5)) c = 'v'; // roof vents
+        else if (!rear && Math.abs(i - 6) + Math.abs(y - mid) <= 2) c = Math.abs(i - 6) + Math.abs(y - mid) === 2 ? 'P' : 'G'; // pantograph diamond
+        else c = y === mid ? 'g' : 'G'; // roof, with a shaded seam down the middle
+      }
+      line.push(c);
+    }
+    grid.push(line.join(''));
+  }
+  return grid;
 }
 
 export const TRAIN_SPRITE = buildTrain();
 
 export const TRAIN_COLORS = {
   K: PALETTE.ink,
+  b: '#3a3f5c', // bellows ribs
   L: '#7fe0a0', // roof edge catching the light
   G: '#1f9d55', // Green Line roof
+  g: '#1a8a4a', // roof seam
   H: '#178048', // roof edge in shade
-  A: '#c9cfe0', // air-conditioning units
-  P: '#8b93a8', // pantograph
+  W: '#2b3a55', // window glass (sunny side)
+  w: '#222b40', // window glass (shady side)
+  R: '#bfe6ff', // glint on glass
+  F: '#e9eef2', // window frames
+  S: '#1e2638', // windshields
+  A: '#c9cfe0', // AC unit
+  a: '#9aa3b8', // AC grille
+  v: '#6b7393', // roof vent
+  P: '#8b93a8', // pantograph frame
   Y: '#fff3b0', // headlights
   r: '#ff5d5d', // tail lights
 };

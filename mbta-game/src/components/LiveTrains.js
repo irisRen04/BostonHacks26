@@ -4,10 +4,10 @@ import { Defs, Ellipse, G, LinearGradient, Path, RadialGradient, Rect, Stop, Tex
 import { POLL_MS } from '../live/mbta';
 import { FONT_TITLE, PALETTE, TRAIN_COLORS, TRAIN_SPRITE, squaresToPath, stampSprite } from '../theme/pixel';
 
-const FRAME_MS = 50; // animation frame (20 fps): smooth enough for the heartbeat
+const FRAME_MS = 50; // animation frame (20 fps): smooth enough for the pulse
 const GLIDE_MS = POLL_MS * 0.9; // reach the new position just before the next update
-const BEAT_MS = 1200; // one heartbeat (lub-dub + rest)
-const BEAT_SIZE = 0.1; // how much a moving train swells on a beat
+const PULSE_MS = 1600; // one full grow-and-shrink
+const PULSE_SIZE = 0.08; // how much a moving train grows at the top of the pulse
 
 /** Train sprite drawn around (0, 0) pointing right, so each train only needs translate + rotate. */
 function useTrainParts(px) {
@@ -29,21 +29,19 @@ function headingOf(t) {
   return (t.bearing ?? 90) - 90;
 }
 
-/** "lub-dub": two quick bumps then a rest, 0..1. */
-function heartbeat(ms) {
-  const p = (ms % BEAT_MS) / BEAT_MS;
-  const bump = (center, width) => Math.exp(-(((p - center) / width) ** 2));
-  return Math.min(1, bump(0.06, 0.05) + 0.65 * bump(0.24, 0.05));
+/** A steady, even grow and shrink: 0 (normal size) up to 1 (biggest) and back. */
+function pulse(ms) {
+  return (1 - Math.cos((2 * Math.PI * (ms % PULSE_MS)) / PULSE_MS)) / 2;
 }
 
-// a stable offset per train so moving trains don't all beat in sync
-const phaseOf = (id) => ([...id].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 1000) * (BEAT_MS / 1000);
+// a stable offset per train so moving trains don't all pulse in sync
+const phaseOf = (id) => ([...id].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 1000) * (PULSE_MS / 1000);
 
 const isMoving = (t) => t.status !== 'STOPPED_AT' && Math.hypot(t.to.x - t.from.x, t.to.y - t.from.y) > 3;
 
 /**
  * Live trains on the map, seen from above. Each train points along its heading with
- * a headlight beam shining ahead, sits on a soft shadow, and pulses like a heartbeat
+ * a headlight beam shining ahead, sits on a soft shadow, and gently grows and shrinks
  * while it's moving (stopped trains stay still). Positions are State Plane meters;
  * (OX, OY, scale) is the map's world->screen transform. Writes tap targets into hitsRef.
  */
@@ -70,7 +68,7 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
     const sy = Math.round(-y * scale + OY);
     if (sx < -w * 2 || sy < -w * 2 || sx > width + w * 2 || sy > height + w * 2) continue;
     const moving = isMoving(t);
-    placed.push({ t, sx, sy, angle: headingOf(t), beat: moving ? heartbeat(now + phaseOf(t.id)) : 0, moving });
+    placed.push({ t, sx, sy, angle: headingOf(t), beat: moving ? pulse(now + phaseOf(t.id)) : 0, moving });
   }
   // rotated trains: a square around the centre is a forgiving tap target
   const reach = w / 2 + 4;
@@ -98,8 +96,8 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
       ))}
 
       {placed.map(({ t, sx, sy, angle, beat, moving }) => {
-        const size = 1 + BEAT_SIZE * beat;
-        // the headlight beam: a cone from the front of the car, brighter on each heartbeat
+        const size = 1 + PULSE_SIZE * beat;
+        // the headlight beam: a cone from the front of the car, brightening as the train grows
         const beam = `M${w / 2 - px} ${-h * 0.3}L${w / 2 + beamLength} ${-h * 1.3}L${w / 2 + beamLength} ${h * 1.3}L${w / 2 - px} ${h * 0.3}Z`;
         return (
           <G key={t.id} transform={`translate(${sx} ${sy})`}>
