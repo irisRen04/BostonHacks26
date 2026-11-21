@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Defs, Ellipse, G, LinearGradient, Path, RadialGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
 
 import { POLL_MS } from '../live/mbta';
 import { FONT_TITLE, PALETTE, TRAIN_COLORS, TRAIN_SPRITE, squaresToPath, stampSprite } from '../theme/pixel';
 
-const FRAME_MS = 50; // animation frame (20 fps): smooth enough for the pulse
+const FRAME_MS = 100; // trains glide at 10 fps: they only move a few points a second
+const PULSE_FRAME_MS = 50; // 20 fps while your train is pulsing, so the pulse stays smooth
 const GLIDE_MS = POLL_MS * 0.9; // reach the new position just before the next update
 const PULSE_MS = 1600; // one full grow-and-shrink
 const PULSE_SIZE = 0.12; // how much your train grows at the top of the pulse
@@ -43,13 +44,14 @@ function pulse(ms) {
  * gently grows and shrinks; every other train stays still. Positions are State Plane meters;
  * (OX, OY, scale) is the map's world->screen transform. Writes tap targets into hitsRef.
  */
-export default function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingFor, hitsRef }) {
+function LiveTrains({ trains, scale, OX, OY, width, height, selectedId, waitingFor, hitsRef }) {
   const [now, setNow] = useState(Date.now());
+  const pulsing = !!waitingFor && trains.some((t) => t.id === waitingFor.trainId);
   useEffect(() => {
     if (!trains.length) return undefined;
-    const id = setInterval(() => setNow(Date.now()), FRAME_MS);
+    const id = setInterval(() => setNow(Date.now()), pulsing ? PULSE_FRAME_MS : FRAME_MS);
     return () => clearInterval(id);
-  }, [trains.length]);
+  }, [trains.length, pulsing]);
 
   const px = scale < 0.15 ? 1 : scale < 0.4 ? 2 : 3; // small until zoomed in, so trains don't crowd the line
   const parts = useTrainParts(px);
@@ -73,8 +75,28 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
   const reach = w / 2 + 4;
   hitsRef.current = placed.map(({ t, sx, sy }) => ({ id: t.id, x0: sx - reach, x1: sx + reach, y0: sy - reach, y1: sy + reach }));
 
+  // Zoomed out, trains are only a few pixels long: draw them all as one combined shape
+  // (small capsules along each heading) instead of ~16 shapes per train. Your train and an
+  // opened train stay detailed.
+  const simple = px === 1;
+  let simplePath = '';
+  if (simple) {
+    for (const { t, sx, sy, angle, mine } of placed) {
+      if (mine || t.id === selectedId) continue;
+      const a = (angle * Math.PI) / 180;
+      const ux = Math.cos(a);
+      const uy = Math.sin(a);
+      const hl = w / 2; // half length
+      const hw = h / 2; // half width
+      const c = (l, s2) => `${(sx + ux * l - uy * s2).toFixed(1)} ${(sy + uy * l + ux * s2).toFixed(1)}`;
+      simplePath += `M${c(-hl, -hw)}L${c(hl, -hw)}L${c(hl, hw)}L${c(-hl, hw)}Z`;
+    }
+  }
+  const detailed = simple ? placed.filter(({ t, mine }) => mine || t.id === selectedId) : placed;
+
   return (
     <G>
+      {simplePath ? <Path d={simplePath} fill={TRAIN_COLORS.G} stroke={TRAIN_COLORS.K} strokeWidth={1} /> : null}
       <Defs>
         <RadialGradient id="trainShadow" cx="50%" cy="50%" r="50%">
           <Stop offset="0%" stopColor="#000" stopOpacity={0.4} />
@@ -94,7 +116,7 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
         </G>
       ))}
 
-      {placed.map(({ t, sx, sy, angle, beat, mine }) => {
+      {detailed.map(({ t, sx, sy, angle, beat, mine }) => {
         const size = mine ? YOURS_SIZE + PULSE_SIZE * beat : 1;
         const label = mine ? `YOUR TRAIN · ${waitingFor.minutes <= 0 ? 'NOW' : `${waitingFor.minutes} MIN`}` : null;
         const labelW = label ? label.length * 6 + 8 : 0;
@@ -125,3 +147,6 @@ export default function LiveTrains({ trains, scale, OX, OY, width, height, selec
     </G>
   );
 }
+
+// Re-renders only for its own animation or when trains change, not on every pan frame.
+export default memo(LiveTrains);

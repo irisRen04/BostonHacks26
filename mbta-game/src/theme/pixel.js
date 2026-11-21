@@ -259,14 +259,20 @@ export function topEdge(cells) {
 
 /**
  * Fill polygons (screen points; outer rings and island rings together, even-odd
- * rule) onto the PX grid anchored at (ox, oy). Scans one grid row at a time and
- * returns a single SVG path made of horizontal runs.
+ * rule) onto the PX grid anchored at (ox, oy). Returns a single SVG path made of
+ * horizontal runs, one grid row at a time.
+ *
+ * Kept fast for zoomed-out views: rings smaller than a pixel or off screen are
+ * skipped, points closer together than half a pixel are merged, and each row only
+ * looks at the edges that actually cross it (an edge list sorted by row).
  */
 export function fillRings(rings, ox, oy, width, height) {
   const maxGX = Math.ceil(width / PX) + 1;
   const maxGY = Math.ceil(height / PX) + 1;
-  // only rings whose box is on screen take part
-  const edges = [];
+  const rows = maxGY + 2; // grid rows -1 .. maxGY
+  const startAt = Array.from({ length: rows }, () => []); // edges grouped by first row they cross
+  const minStep = PX / 2;
+  let any = false;
   for (const ring of rings) {
     let minX = Infinity;
     let minY = Infinity;
@@ -279,32 +285,50 @@ export function fillRings(rings, ox, oy, width, height) {
       if (y > maxY) maxY = y;
     }
     if (maxX < 0 || maxY < 0 || minX > width || minY > height) continue; // can't touch the screen
-    for (let i = 0; i < ring.length; i++) {
-      const a = ring[i];
-      const b = ring[(i + 1) % ring.length];
+    if (maxX - minX < PX * 0.75 && maxY - minY < PX * 0.75) continue; // smaller than a pixel
+    // merge points that land within half a pixel of the last kept one
+    const pts = [];
+    for (const p of ring) {
+      const last = pts[pts.length - 1];
+      if (!last || Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) >= minStep) pts.push(p);
+    }
+    if (pts.length < 3) continue;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
       if (a[1] === b[1]) continue;
-      edges.push(a[1] < b[1] ? [a[0], a[1], b[0], b[1]] : [b[0], b[1], a[0], a[1]]);
+      const [x0, y0, x1, y1] = a[1] < b[1] ? [a[0], a[1], b[0], b[1]] : [b[0], b[1], a[0], a[1]];
+      // grid rows whose centre line (oy + (gy + 0.5) * PX) lies in [y0, y1)
+      const first = Math.max(-1, Math.ceil((y0 - oy) / PX - 0.5));
+      const last = Math.min(maxGY, Math.ceil((y1 - oy) / PX - 0.5) - 1);
+      if (last < first) continue;
+      startAt[first + 1].push({ x0, y0, slope: (x1 - x0) / (y1 - y0), last });
+      any = true;
     }
   }
-  if (!edges.length) return '';
+  if (!any) return '';
   let d = '';
+  let active = [];
   const xs = [];
   for (let gy = -1; gy <= maxGY; gy++) {
     const yc = oy + (gy + 0.5) * PX;
+    if (startAt[gy + 1].length) active = active.concat(startAt[gy + 1]);
+    if (!active.length) continue;
     xs.length = 0;
-    for (const [x0, y0, x1, y1] of edges) {
-      if (yc < y0 || yc >= y1) continue;
-      xs.push(x0 + ((yc - y0) * (x1 - x0)) / (y1 - y0));
+    let keep = 0;
+    for (const e of active) {
+      xs.push(e.x0 + (yc - e.y0) * e.slope);
+      if (e.last > gy) active[keep++] = e; // still crosses the next row
     }
+    active.length = keep;
     if (xs.length < 2) continue;
     xs.sort((p, q) => p - q);
     for (let i = 0; i + 1 < xs.length; i += 2) {
       const g0 = Math.max(-1, Math.round((xs[i] - ox) / PX));
       const g1 = Math.min(maxGX, Math.round((xs[i + 1] - ox) / PX));
       if (g1 <= g0) continue;
-      const x = ox + g0 * PX;
       const w = (g1 - g0) * PX;
-      d += `M${x} ${oy + gy * PX}h${w}v${PX}h${-w}z`;
+      d += `M${ox + g0 * PX} ${oy + gy * PX}h${w}v${PX}h${-w}z`;
     }
   }
   return d;
