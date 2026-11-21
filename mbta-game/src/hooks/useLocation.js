@@ -6,8 +6,18 @@ export function useLocation() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const stop = watchLocation(setCoords, (err) => setError(err.message));
-    return stop; // cleanup when the component unmounts
+    let stop = null;
+    let cancelled = false;
+
+    watchLocation(setCoords, (err) => setError(err.message)).then((fn) => {
+      if (cancelled) fn();
+      else stop = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (stop) stop();
+    };
   }, []);
 
   return { coords, error };
