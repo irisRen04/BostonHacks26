@@ -4,23 +4,79 @@ import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 import { PixelButton, ui } from './ui';
 
-const ARROWS = { up: '▲', left: '◀', right: '▶', down: '▼' };
-
-function NeighborCell({ dir, ids, onSelect }) {
+function BranchTiles({ branches, small }) {
   return (
-    <View style={[styles.cell, (dir === 'up' || dir === 'down') && styles.cellCenter]}>
-      <Text style={[styles.arrow, ids.length === 0 && styles.dim]}>{ARROWS[dir]}</Text>
-      {ids.length === 0 ? (
-        <Text style={[styles.body, styles.dim]}>---</Text>
-      ) : (
-        ids.map((id) => (
-          <PixelButton key={id} onPress={() => onSelect(id)} style={styles.neighbor}>
-            <Text style={styles.body} numberOfLines={1}>
-              {stationsById[id].name}
-            </Text>
-          </PixelButton>
-        ))
+    <View style={styles.optionBranches}>
+      {branches.map((b) => (
+        <View key={b} style={[styles.branchTile, small && styles.branchTileSmall]}>
+          <Text style={[styles.branchTileText, small && styles.branchTileTextSmall]}>{b}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** A way to ride from an ordinary stop: the next stop and where those trains end up. */
+function NextStopButton({ option, onSelect }) {
+  return (
+    <PixelButton onPress={() => onSelect(option.id)} style={styles.next}>
+      <BranchTiles branches={option.branches} small />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.nextName} numberOfLines={1}>
+          {stationsById[option.id].name}
+        </Text>
+        <Text style={styles.toward} numberOfLines={1}>
+          toward {option.toward.join(' / ')}
+        </Text>
+      </View>
+      <Text style={styles.nextGo}>▶</Text>
+    </PixelButton>
+  );
+}
+
+/**
+ * When the next stop is a junction it gets a bigger banner that previews the
+ * branches you can take once you get there (not counting the way back here).
+ */
+function JunctionBanner({ fromId, option, onSelect }) {
+  const ahead = routeOptions(option.id).filter((o) => o.id !== fromId);
+  return (
+    <PixelButton onPress={() => onSelect(option.id)} style={styles.banner}>
+      <View style={styles.bannerHead}>
+        <Text style={styles.bannerName} numberOfLines={1}>
+          {stationsById[option.id].name.toUpperCase()}
+        </Text>
+        <View style={styles.junctionTag}>
+          <Text style={styles.junctionTagText}>★ JUNCTION</Text>
+        </View>
+      </View>
+      <Text style={styles.bannerLead}>From there you can take:</Text>
+      {ahead.map((o) => (
+        <View key={o.id} style={styles.bannerRow}>
+          <BranchTiles branches={o.branches} small />
+          <Text style={styles.bannerRowText} numberOfLines={1}>
+            to {o.toward.join(' / ')}
+          </Text>
+        </View>
+      ))}
+      <Text style={styles.bannerGo}>RIDE TO {stationsById[option.id].name.toUpperCase()} ▶</Text>
+    </PixelButton>
+  );
+}
+
+/** Ordinary stop: one button per way you can go, labelled by destination instead of arrows. */
+function NextStops({ station, onSelect }) {
+  const options = routeOptions(station.id);
+  return (
+    <View style={styles.nextList}>
+      {options.map((o) =>
+        isJunction(o.id) ? (
+          <JunctionBanner key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
+        ) : (
+          <NextStopButton key={o.id} option={o} onSelect={onSelect} />
+        ),
       )}
+      {options.length === 1 && <Text style={styles.hint}>End of the line. The only way is back.</Text>}
     </View>
   );
 }
@@ -44,13 +100,7 @@ function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
   return (
     <View style={styles.junction}>
       <View style={styles.infoRow}>
-        <View style={styles.optionBranches}>
-          {option.branches.map((b) => (
-            <View key={b} style={styles.branchTile}>
-              <Text style={styles.branchTileText}>{b}</Text>
-            </View>
-          ))}
-        </View>
+        <BranchTiles branches={option.branches} />
         <View style={{ flex: 1 }}>
           <Text style={styles.prompt}>{isBack ? `BACK · ${trains}` : trains}</Text>
           <Text style={styles.infoText} numberOfLines={1}>
@@ -102,14 +152,7 @@ export default function StationCard({ station, previousId, activeSignId, onSelec
       {isJunction(station.id) ? (
         <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />
       ) : (
-        <View style={styles.pad}>
-          <NeighborCell dir="up" ids={station.up} onSelect={onSelect} />
-          <View style={styles.middleRow}>
-            <NeighborCell dir="left" ids={station.left} onSelect={onSelect} />
-            <NeighborCell dir="right" ids={station.right} onSelect={onSelect} />
-          </View>
-          <NeighborCell dir="down" ids={station.down} onSelect={onSelect} />
-        </View>
+        <NextStops station={station} onSelect={onSelect} />
       )}
     </View>
   );
@@ -134,15 +177,7 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   chip: { backgroundColor: PALETTE.green, borderWidth: 2, borderColor: PALETTE.greenLight, paddingHorizontal: 6, paddingVertical: 4 },
   chipText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.white },
-  body: { fontFamily: FONT_BODY, fontSize: 19, color: PALETTE.ink },
-  dim: { color: '#6b7393' },
 
-  pad: { marginTop: 12, gap: 6 },
-  middleRow: { flexDirection: 'row', gap: 6 },
-  cell: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cellCenter: { justifyContent: 'center' },
-  arrow: { fontSize: 14, color: PALETTE.gold, width: 16, textAlign: 'center' },
-  neighbor: { paddingHorizontal: 6, paddingVertical: 1, flexShrink: 1 },
 
   junction: { marginTop: 12, gap: 8 },
   hint: { fontFamily: FONT_BODY, fontSize: 18, color: '#b7c0d8' },
@@ -162,4 +197,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   branchTileText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
+  branchTileSmall: { width: 18, height: 18 },
+  branchTileTextSmall: { fontSize: 8 },
+
+  nextList: { marginTop: 12, gap: 8 },
+  next: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  nextName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
+  toward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
+  nextGo: { fontSize: 14, color: PALETTE.ink },
+
+  banner: { padding: 10, gap: 4, backgroundColor: '#fff6d6', borderColor: PALETTE.ink },
+  bannerHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannerName: { flexShrink: 1, fontFamily: FONT_TITLE, fontSize: 12, lineHeight: 18, color: PALETTE.ink },
+  junctionTag: { backgroundColor: PALETTE.gold, borderWidth: 2, borderColor: PALETTE.ink, paddingHorizontal: 5, paddingVertical: 3 },
+  junctionTagText: { fontFamily: FONT_TITLE, fontSize: 7, color: PALETTE.ink },
+  bannerLead: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
+  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannerRowText: { flex: 1, fontFamily: FONT_BODY, fontSize: 18, color: PALETTE.ink },
+  bannerGo: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.green, marginTop: 4, alignSelf: 'flex-end' },
 });
