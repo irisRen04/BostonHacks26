@@ -11,6 +11,14 @@ export const PALETTE = {
   night: '#262b44', // UI panels
   panelEdge: '#f4f4f4',
   ground: '#cfd8a3',
+  water: '#3a6ea5',
+  waterLight: '#6fa3d6', // wave highlights
+  waterDeep: '#2f5d8f',
+  shore: '#e2d3a0', // sandy bank along the water's edge
+  park: '#a9c46f',
+  parkEdge: '#7d9e4f', // hedge around parks
+  tree: '#4f7a35',
+  treeLight: '#8fbf5a',
   groundDark: '#bfca8f',
   groundSpeck: '#a9b878',
   white: '#f4f4f4',
@@ -177,4 +185,57 @@ export function topEdge(cells) {
     if (!cells.has(key(gx, gy - 1))) out.set(k, [gx, gy]);
   }
   return out;
+}
+
+/**
+ * Fill polygons (screen points; outer rings and island rings together, even-odd
+ * rule) onto the PX grid anchored at (ox, oy). Scans one grid row at a time and
+ * returns a single SVG path made of horizontal runs.
+ */
+export function fillRings(rings, ox, oy, width, height) {
+  const maxGX = Math.ceil(width / PX) + 1;
+  const maxGY = Math.ceil(height / PX) + 1;
+  // only rings whose box is on screen take part
+  const edges = [];
+  for (const ring of rings) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of ring) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (maxX < 0 || maxY < 0 || minX > width || minY > height) continue; // can't touch the screen
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      if (a[1] === b[1]) continue;
+      edges.push(a[1] < b[1] ? [a[0], a[1], b[0], b[1]] : [b[0], b[1], a[0], a[1]]);
+    }
+  }
+  if (!edges.length) return '';
+  let d = '';
+  const xs = [];
+  for (let gy = -1; gy <= maxGY; gy++) {
+    const yc = oy + (gy + 0.5) * PX;
+    xs.length = 0;
+    for (const [x0, y0, x1, y1] of edges) {
+      if (yc < y0 || yc >= y1) continue;
+      xs.push(x0 + ((yc - y0) * (x1 - x0)) / (y1 - y0));
+    }
+    if (xs.length < 2) continue;
+    xs.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const g0 = Math.max(-1, Math.round((xs[i] - ox) / PX));
+      const g1 = Math.min(maxGX, Math.round((xs[i + 1] - ox) / PX));
+      if (g1 <= g0) continue;
+      const x = ox + g0 * PX;
+      const w = (g1 - g0) * PX;
+      d += `M${x} ${oy + gy * PX}h${w}v${PX}h${-w}z`;
+    }
+  }
+  return d;
 }

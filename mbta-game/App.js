@@ -7,14 +7,22 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import useAvatar from './src/avatar/useAvatar';
 import GameMenu from './src/components/GameMenu';
+import LandmarkCard, { DiscoveryPopup } from './src/components/LandmarkCard';
+import LeaderboardScreen from './src/components/LeaderboardScreen';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
-import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
+import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
+import { landmarks, landmarksById } from './src/data/landmarks';
+import useDiscoveries from './src/data/useDiscoveries';
+import usePlayer from './src/hooks/usePlayer';
+import useProgress from './src/hooks/useProgress';
 import { useRankedStops } from './src/hooks/useRankedStops';
 import { useWalkingInfo } from './src/hooks/useWalkingInfo';
+import { syncPlayer } from './src/services/leaderboard';
 import { formatDistance } from './src/services/proximity';
 import { rideBetween } from './src/services/ride';
+import { landmarksAtStop } from './src/services/xp';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 // "Park Street" vs "park st." shouldn't break name matching
@@ -29,11 +37,16 @@ export default function App() {
   const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
   const [avatar, setAvatar] = useAvatar();
+  const [discovered, discover] = useDiscoveries();
+  // Landmark whose card is open, and newly discovered ones waiting for their popup.
+  const [landmarkId, setLandmarkId] = useState(null);
+  const [discoveryQueue, setDiscoveryQueue] = useState([]);
+  const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
-  const menuBottom = selected ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
+  const menuBottom = selected || landmark ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
   const [activeSignId, setActiveSignId] = useState(null);
@@ -41,6 +54,7 @@ export default function App() {
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
     setActiveSignId(null);
+    setLandmarkId(null);
     setTrip({ currentId: id, previousId: null });
     if (id) mapRef.current?.focusStation(stationsById[id]);
   }, []);
@@ -48,9 +62,32 @@ export default function App() {
   // Riding to a connected stop from the card remembers where we came from and follows the rider.
   const rideTo = useCallback((id) => {
     setActiveSignId(null);
+    setLandmarkId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
+
+  // ---- XP: each arrival at a stop is a visit to its landmarks ----
+  const progress = useProgress();
+  const { loaded, recordVisit } = progress;
+  useEffect(() => {
+    if (!loaded || !selectedId) return;
+    const here = landmarksAtStop(selectedId).map((l) => l.id);
+    if (here.length) recordVisit(here);
+  }, [loaded, selectedId, recordVisit]);
+
+  // ---- Leaderboard: push my score whenever it changes ----
+  const { player, setName, addFriend } = usePlayer();
+  useEffect(() => {
+    if (!player || !loaded) return;
+    syncPlayer({
+      id: player.id,
+      name: player.name,
+      code: player.code,
+      xp: progress.xp,
+      found: progress.found,
+    }).catch(() => {});
+  }, [player?.id, player?.name, progress.xp, progress.found, loaded]);
 
   // ---- Nearest stop to the user's real location ----
   const { ranked, coords } = useRankedStops();
@@ -108,6 +145,20 @@ export default function App() {
   const walkToBoard = nearest ? walking[nearest.station.id]?.minutes ?? nearest.walkMinutes : 0;
   const totalMin = ride ? walkToBoard + ride.minutes : null;
 
+  // Arriving at a stop discovers every landmark whose nearest stop it is (one popup each).
+  useEffect(() => {
+    if (!selectedId) return;
+    const found = landmarks.filter((l) => l.nearestStop === selectedId && !discovered[l.id]).map((l) => l.id);
+    if (!found.length) return;
+    found.forEach(discover);
+    setDiscoveryQueue((q) => [...q, ...found.filter((id) => !q.includes(id))]);
+  }, [selectedId, discovered, discover]);
+
+  const openLandmark = useCallback((id) => {
+    setLandmarkId(id);
+    mapRef.current?.focusStation(landmarksById[id]);
+  }, []);
+
   // One sign per way out of a junction; the way you came in is the BACK sign.
   const signs = useMemo(() => {
     if (!selectedId || !isJunction(selectedId)) return null;
@@ -139,6 +190,8 @@ export default function App() {
           signs={signs}
           activeSignId={activeSignId}
           onSignPress={pressSign}
+          discovered={discovered}
+          onLandmarkPress={openLandmark}
         />
 
         <View style={styles.header} pointerEvents="none">
@@ -146,6 +199,17 @@ export default function App() {
             <Text style={styles.lineBadgeText}>GL</Text>
           </View>
           <Text style={styles.title}>GREEN LINE</Text>
+        </View>
+
+        {/* XP bar */}
+        <View style={styles.xpBar} pointerEvents="none">
+          <Text style={styles.xpLevel}>LV {progress.level}</Text>
+          <View style={styles.xpTrack}>
+            <View style={[styles.xpFill, { width: `${(progress.xpIntoLevel / progress.xpForLevel) * 100}%` }]} />
+          </View>
+          <Text style={styles.xpText}>
+            {progress.xp} XP · {progress.found}/{progress.total}
+          </Text>
         </View>
 
         {info && (
@@ -179,9 +243,20 @@ export default function App() {
           <ZoomButton label="[]" onPress={() => mapRef.current?.reset()} />
         </View>
 
-        {!selected && <StartHint />}
+        {!selected && !landmark && <StartHint />}
 
-        {selected && (
+        {landmark && (
+          <LandmarkCard
+            landmark={landmark}
+            discovered={!!discovered[landmark.id]}
+            atNearestStop={selectedId === landmark.nearestStop}
+            onGo={() => placeAt(landmark.nearestStop)}
+            onClose={() => setLandmarkId(null)}
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+          />
+        )}
+
+        {selected && !landmark && (
           <StationCard
             station={selected}
             previousId={trip.previousId}
@@ -197,7 +272,36 @@ export default function App() {
         {screen === 'customize' && (
           <CustomizeScreen avatar={avatar} onSave={setAvatar} onClose={() => setScreen(null)} />
         )}
-        {screen && screen !== 'customize' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
+        {screen === 'places' && (
+          <PlacesScreen
+            discovered={discovered}
+            onShow={(id) => {
+              setScreen(null);
+              openLandmark(id);
+            }}
+            onClose={() => setScreen(null)}
+          />
+        )}
+        {screen === 'friends' && player && (
+          <LeaderboardScreen
+            player={player}
+            xp={progress.xp}
+            found={progress.found}
+            setName={setName}
+            addFriend={addFriend}
+            onClose={() => setScreen(null)}
+          />
+        )}
+        {screen === 'settings' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
+
+        {discoveryQueue.length > 0 && (
+          <DiscoveryPopup
+            key={discoveryQueue[0]}
+            landmark={landmarksById[discoveryQueue[0]]}
+            remaining={discoveryQueue.length - 1}
+            onClose={() => setDiscoveryQueue((q) => q.slice(1))}
+          />
+        )}
       </View>
       <StatusBar style="dark" />
     </View>
@@ -256,6 +360,22 @@ const styles = StyleSheet.create({
     paddingLeft: 6,
     paddingRight: 12,
   },
+  xpBar: {
+    position: 'absolute',
+    top: isWeb ? 16 : 56,
+    left: 176,
+    right: 66,
+    backgroundColor: PALETTE.night,
+    borderWidth: 3,
+    borderColor: PALETTE.panelEdge,
+    boxShadow: `4px 4px 0px ${PALETTE.ink}`,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  xpLevel: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.gold },
+  xpTrack: { height: 6, backgroundColor: PALETTE.ink, marginVertical: 3 },
+  xpFill: { height: 6, backgroundColor: PALETTE.green },
+  xpText: { fontFamily: FONT_BODY, fontSize: 15, color: '#b7c0d8' },
   distBadge: {
     position: 'absolute',
     top: isWeb ? 64 : 104,

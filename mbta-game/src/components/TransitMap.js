@@ -13,18 +13,26 @@ import {
   TRANSFER_SPRITE,
   TRANSFER_SPRITE_SMALL,
   cellsToPath,
+  fillRings,
   rasterize,
   squaresToPath,
   stampSprite,
   topEdge,
 } from '../theme/pixel';
+import { landmarks } from '../data/landmarks';
+import parks from '../data/parks.json';
+import sea from '../data/sea.json';
+import water from '../data/water.json';
 import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
+import { AnimatedLandmarkPaths } from './LandmarkSprite';
 import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
+const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
+const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far
 
 // Chunkier track and bigger stop sprites as you zoom in.
 function zoomStyle(scale) {
@@ -33,6 +41,40 @@ function zoomStyle(scale) {
   if (scale < 0.5) return { track: 3, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 3 };
   return { track: 4, sprite: STOP_SPRITE, transfer: TRANSFER_SPRITE, s: 4 };
 }
+
+// Water texture tile, in map pixels: short light wave dashes and a deep speck
+const WAVE_TILE = 8;
+const WAVES = [
+  [1, 1, PALETTE.waterLight],
+  [2, 1, PALETTE.waterLight],
+  [5, 4, PALETTE.waterLight],
+  [6, 4, PALETTE.waterLight],
+  [3, 6, PALETTE.waterDeep],
+];
+
+// Park texture tile: two little pixel trees (dark crown, one light pixel)
+const PARK_TILE = 10;
+const TREES = [
+  [2, 2, PALETTE.tree],
+  [3, 2, PALETTE.tree],
+  [2, 3, PALETTE.tree],
+  [3, 3, PALETTE.tree],
+  [2, 2, PALETTE.treeLight],
+  [7, 6, PALETTE.tree],
+  [8, 6, PALETTE.tree],
+  [7, 7, PALETTE.tree],
+  [8, 7, PALETTE.tree],
+  [7, 6, PALETTE.treeLight],
+];
+
+// Every water / park ring, flattened once (outer edges and holes; filled even-odd)
+const WATER_RINGS = water.bodies.flatMap((b) => b.rings);
+const PARK_RINGS = parks.bodies.flatMap((b) => b.rings);
+// Boston Harbor: sea areas plus islands (holes), and the coastline for beaches.
+// Filled separately from lakes/rivers so overlaps don't cancel out under even-odd.
+const SEA_RINGS = sea.rings;
+const COAST_LINES = sea.coast;
+const closeRings = (rings) => rings.map((r) => [...r, r[0]]);
 
 // Ground texture tile, in map pixels: [x, y, colour]
 const GROUND_TILE = 8;
@@ -70,7 +112,7 @@ const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY)
  * current stop (see JunctionSigns). Tapping a sign calls onSignPress(neighbourId).
  */
 const TransitMap = forwardRef(function TransitMap(
-  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress },
+  { selectedId, onSelectStation, avatar, signs, activeSignId, onSignPress, discovered, onLandmarkPress },
   ref,
 ) {
   const [size, setSize] = useState(null);
@@ -86,10 +128,18 @@ const TransitMap = forwardRef(function TransitMap(
   const onSignRef = useRef(onSignPress);
   onSignRef.current = onSignPress;
   const placedSignsRef = useRef([]);
+  const onLandmarkRef = useRef(onLandmarkPress);
+  onLandmarkRef.current = onLandmarkPress;
+  const landmarkHitsRef = useRef([]);
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
-    const cam = { ...next, scale };
+    // keep the view centred near the Green Line so you can't scroll off into empty map
+    const cam = {
+      scale,
+      cx: Math.min(greenBounds.maxX + PAN_MARGIN, Math.max(greenBounds.minX - PAN_MARGIN, next.cx)),
+      cy: Math.min(greenBounds.maxY + PAN_MARGIN, Math.max(greenBounds.minY - PAN_MARGIN, next.cy)),
+    };
     cameraRef.current = cam;
     setCamera(cam);
   }, []);
@@ -208,8 +258,13 @@ const TransitMap = forwardRef(function TransitMap(
         const g = gesture.current;
         if (g && !g.moved && g.tap) {
           const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
+          const landmark = sign ? null : landmarkHitsRef.current.find(
+            (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1,
+          );
           if (sign) {
             onSignRef.current?.(sign.id);
+          } else if (landmark) {
+            onLandmarkRef.current?.(landmark.id);
           } else {
             const hit = hitTest(g.tap.x, g.tap.y);
             onSelectRef.current?.(hit ? hit.id : null);
@@ -229,7 +284,7 @@ const TransitMap = forwardRef(function TransitMap(
       setSize({ width, height });
       sizeRef.current = { width, height };
       const fit = fitCamera(width, height);
-      minScaleRef.current = fit.scale * 0.6;
+      minScaleRef.current = fit.scale * 0.9; // a little past "whole line fits"
       if (!cameraRef.current) applyCamera(fit);
       measureOrigin();
     },
@@ -262,6 +317,23 @@ const TransitMap = forwardRef(function TransitMap(
     const goy = Math.round(((OY % PX) + PX) % PX) - PX;
     const toScreen = (pts) => pts.map(([x, y]) => [x * scale + OX, -y * scale + OY]);
     const style = zoomStyle(scale);
+
+    // parks: a hedge traced around each park, then the treed lawn filled on top
+    const parkScreen = PARK_RINGS.map((ring) => toScreen(ring));
+    const parkPaths = {
+      edge: style.track >= 2 ? cellsToPath(rasterize(closeRings(parkScreen), 2, gox, goy, width, height), gox, goy) : '',
+      fill: fillRings(parkScreen, gox, goy, width, height),
+    };
+
+    // water: a sandy bank traced along every shore and the coast, then the water filled on top
+    const waterScreen = WATER_RINGS.map((ring) => toScreen(ring));
+    const banks = [...closeRings(waterScreen), ...COAST_LINES.map((line) => toScreen(line))];
+    const waterPaths = {
+      // banks only once zoomed in a bit: zoomed all the way out they'd be wider than thin rivers
+      shore: style.track >= 2 ? cellsToPath(rasterize(banks, 2, gox, goy, width, height), gox, goy) : '',
+      fill: fillRings(waterScreen, gox, goy, width, height),
+      sea: fillRings(SEA_RINGS.map((ring) => toScreen(ring)), gox, goy, width, height),
+    };
 
     // other lines: flat, muted, one size thinner
     const others = {};
@@ -299,8 +371,24 @@ const TransitMap = forwardRef(function TransitMap(
     const spritePaths = Object.entries(sprites).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
+    // landmarks, bottom-centre on their real location, only when zoomed in
+    const landmarkPx = scale < 0.3 ? 2 : 3;
+    const placedLandmarks =
+      scale < LANDMARK_SCALE
+        ? []
+        : landmarks
+            .map((lm) => {
+              const x = Math.round(lm.x * scale + OX);
+              const y = Math.round(-lm.y * scale + OY);
+              const w = lm.sprite[0].length * landmarkPx;
+              const h = lm.sprite.length * landmarkPx;
+              return { landmark: lm, x, y, w, h, px: landmarkPx, // the nameplate to the right of the sprite is tappable too
+              hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 } };
+            })
+            .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
+
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
-    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen };
+    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
@@ -314,6 +402,7 @@ const TransitMap = forwardRef(function TransitMap(
     return layoutSigns(signs, current, positions);
   }, [projected, current, signs]);
   placedSignsRef.current = placedSigns;
+  landmarkHitsRef.current = projected ? projected.placedLandmarks.map((p) => p.hit) : [];
   const signTarget = activeSignId && projected ? projected.stationToScreen(stationsById[activeSignId]) : null;
 
   return (
@@ -334,8 +423,43 @@ const TransitMap = forwardRef(function TransitMap(
                 <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
               ))}
             </Pattern>
+            <Pattern
+              id="parkland"
+              patternUnits="userSpaceOnUse"
+              x={projected.gox}
+              y={projected.goy}
+              width={PARK_TILE * PX}
+              height={PARK_TILE * PX}
+            >
+              <Rect width={PARK_TILE * PX} height={PARK_TILE * PX} fill={PALETTE.park} />
+              {TREES.map(([x, y, c], i) => (
+                <Rect key={i} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
+              ))}
+            </Pattern>
+            <Pattern
+              id="waves"
+              patternUnits="userSpaceOnUse"
+              x={projected.gox}
+              y={projected.goy}
+              width={WAVE_TILE * PX}
+              height={WAVE_TILE * PX}
+            >
+              <Rect width={WAVE_TILE * PX} height={WAVE_TILE * PX} fill={PALETTE.water} />
+              {WAVES.map(([x, y, c]) => (
+                <Rect key={`${x}-${y}`} x={x * PX} y={y * PX} width={PX} height={PX} fill={c} />
+              ))}
+            </Pattern>
           </Defs>
           <Rect width={size.width} height={size.height} fill="url(#ground)" />
+
+          {/* parks */}
+          {projected.parkPaths.edge ? <Path d={projected.parkPaths.edge} fill={PALETTE.parkEdge} /> : null}
+          {projected.parkPaths.fill ? <Path d={projected.parkPaths.fill} fill="url(#parkland)" /> : null}
+
+          {/* rivers, ponds and reservoirs */}
+          {projected.waterPaths.shore ? <Path d={projected.waterPaths.shore} fill={PALETTE.shore} /> : null}
+          {projected.waterPaths.sea ? <Path d={projected.waterPaths.sea} fill="url(#waves)" /> : null}
+          {projected.waterPaths.fill ? <Path d={projected.waterPaths.fill} fill="url(#waves)" /> : null}
 
           {/* the rest of the MBTA, muted */}
           <G opacity={0.45}>
@@ -348,6 +472,11 @@ const TransitMap = forwardRef(function TransitMap(
           <Path d={projected.greenPaths.outline} fill={PALETTE.greenDark} />
           <Path d={projected.greenPaths.fill} fill={PALETTE.green} />
           {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
+
+          {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
+          {projected.placedLandmarks.map(({ landmark, x, y, px }) => (
+            <AnimatedLandmarkPaths key={landmark.id} landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
+          ))}
 
           {/* stop sprites */}
           {projected.spritePaths.map(({ color, d }) => (
@@ -379,6 +508,17 @@ const TransitMap = forwardRef(function TransitMap(
                 active={station.id === selectedId}
               />
             ))}
+
+          {/* landmark nameplates */}
+          {projected.placedLandmarks.map(({ landmark, x, y, w, h }) => (
+            <Nameplate
+              key={`lm-${landmark.id}`}
+              x={Math.round(x + w / 2 + 2)}
+              y={Math.round(y - h + 8)}
+              text={discovered?.[landmark.id] ? `★ ${landmark.shortName}` : '???'}
+              active={!!discovered?.[landmark.id]}
+            />
+          ))}
 
           {/* the rider */}
           {current && (
