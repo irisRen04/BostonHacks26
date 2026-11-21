@@ -3,8 +3,11 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AVATAR_OPTIONS, randomAvatar } from '../avatar/avatar';
+import { stationsById } from '../data/greenLine';
+import { landmarks } from '../data/landmarks';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 import AvatarSprite from './AvatarSprite';
+import LandmarkSprite from './LandmarkSprite';
 import { PixelButton, ui } from './ui';
 
 function GameScreen({ title, onClose, children, footer }) {
@@ -82,12 +85,39 @@ export function CustomizeScreen({ avatar, onSave, onClose }) {
   );
 }
 
+/** Landmark collection: discovered ones in colour, the rest as silhouettes. Tapping one shows it on the map. */
+export function PlacesScreen({ discovered, onShow, onClose }) {
+  const found = landmarks.filter((l) => discovered[l.id]).length;
+  return (
+    <GameScreen title="PLACES TO VISIT" onClose={onClose}>
+      <Text style={styles.counter}>
+        DISCOVERED {found}/{landmarks.length}
+      </Text>
+      {landmarks.map((lm) => {
+        const known = !!discovered[lm.id];
+        return (
+          <PixelButton key={lm.id} onPress={() => onShow(lm.id)} style={styles.place}>
+            <View style={styles.placeThumb}>
+              <LandmarkSprite landmark={lm} px={2} discovered={known} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.placeName} numberOfLines={2}>
+                {known ? lm.name.toUpperCase() : '???'}
+              </Text>
+              <Text style={styles.placeNear} numberOfLines={1}>
+                near {stationsById[lm.nearestStop].name}
+              </Text>
+            </View>
+            <Text style={styles.placeGo}>▶</Text>
+          </PixelButton>
+        );
+      })}
+      <Text style={styles.placesHint}>Ride to a landmark's stop to discover it. More landmarks coming soon!</Text>
+    </GameScreen>
+  );
+}
+
 const COMING_SOON = {
-  places: {
-    title: 'PLACES TO VISIT',
-    icon: '★',
-    text: 'Spots worth hopping off for near each Green Line stop: museums, parks, food and landmarks.',
-  },
   friends: {
     title: 'FRIENDS',
     icon: '☺',
@@ -161,6 +191,13 @@ const styles = StyleSheet.create({
   secondary: { backgroundColor: '#c9cfe0' },
   footerText: { fontFamily: FONT_TITLE, fontSize: 10, color: PALETTE.ink },
 
+  counter: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.gold, marginBottom: 4 },
+  place: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 8 },
+  placeThumb: { backgroundColor: PALETTE.ground, borderWidth: 2, borderColor: PALETTE.ink, padding: 3 },
+  placeName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
+  placeNear: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068', marginTop: 2 },
+  placeGo: { fontSize: 14, color: PALETTE.ink },
+  placesHint: { fontFamily: FONT_BODY, fontSize: 18, color: '#b7c0d8', marginTop: 6 },
   soon: { alignItems: 'center', paddingVertical: 24, gap: 12 },
   soonIcon: { fontSize: 40, color: PALETTE.gold },
   soonTitle: { fontFamily: FONT_TITLE, fontSize: 12, color: PALETTE.gold },

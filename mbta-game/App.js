@@ -7,10 +7,13 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import useAvatar from './src/avatar/useAvatar';
 import GameMenu from './src/components/GameMenu';
+import LandmarkCard, { DiscoveryPopup } from './src/components/LandmarkCard';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
-import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
+import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stationsById } from './src/data/greenLine';
+import { landmarks, landmarksById } from './src/data/landmarks';
+import useDiscoveries from './src/data/useDiscoveries';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 export default function App() {
@@ -21,11 +24,16 @@ export default function App() {
   const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
   const [avatar, setAvatar] = useAvatar();
+  const [discovered, discover] = useDiscoveries();
+  // Landmark whose card is open, and one that was just discovered (shows the popup).
+  const [landmarkId, setLandmarkId] = useState(null);
+  const [justDiscoveredId, setJustDiscoveredId] = useState(null);
+  const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
-  const menuBottom = selected ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
+  const menuBottom = selected || landmark ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
   const [activeSignId, setActiveSignId] = useState(null);
@@ -33,6 +41,7 @@ export default function App() {
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
     setActiveSignId(null);
+    setLandmarkId(null);
     setTrip({ currentId: id, previousId: null });
     if (id) mapRef.current?.focusStation(stationsById[id]);
   }, []);
@@ -40,8 +49,24 @@ export default function App() {
   // Riding to a connected stop from the card remembers where we came from and follows the rider.
   const rideTo = useCallback((id) => {
     setActiveSignId(null);
+    setLandmarkId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
+  }, []);
+
+  // Arriving at a landmark's nearest stop discovers it.
+  useEffect(() => {
+    if (!selectedId) return;
+    const found = landmarks.find((l) => l.nearestStop === selectedId && !discovered[l.id]);
+    if (found) {
+      discover(found.id);
+      setJustDiscoveredId(found.id);
+    }
+  }, [selectedId, discovered, discover]);
+
+  const openLandmark = useCallback((id) => {
+    setLandmarkId(id);
+    mapRef.current?.focusStation(landmarksById[id]);
   }, []);
 
   // One sign per way out of a junction; the way you came in is the BACK sign.
@@ -75,6 +100,8 @@ export default function App() {
           signs={signs}
           activeSignId={activeSignId}
           onSignPress={pressSign}
+          discovered={discovered}
+          onLandmarkPress={openLandmark}
         />
 
         <View style={styles.header} pointerEvents="none">
@@ -90,9 +117,20 @@ export default function App() {
           <ZoomButton label="[]" onPress={() => mapRef.current?.reset()} />
         </View>
 
-        {!selected && <StartHint />}
+        {!selected && !landmark && <StartHint />}
 
-        {selected && (
+        {landmark && (
+          <LandmarkCard
+            landmark={landmark}
+            discovered={!!discovered[landmark.id]}
+            atNearestStop={selectedId === landmark.nearestStop}
+            onGo={() => placeAt(landmark.nearestStop)}
+            onClose={() => setLandmarkId(null)}
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+          />
+        )}
+
+        {selected && !landmark && (
           <StationCard
             station={selected}
             previousId={trip.previousId}
@@ -108,7 +146,21 @@ export default function App() {
         {screen === 'customize' && (
           <CustomizeScreen avatar={avatar} onSave={setAvatar} onClose={() => setScreen(null)} />
         )}
-        {screen && screen !== 'customize' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
+        {screen === 'places' && (
+          <PlacesScreen
+            discovered={discovered}
+            onShow={(id) => {
+              setScreen(null);
+              openLandmark(id);
+            }}
+            onClose={() => setScreen(null)}
+          />
+        )}
+        {(screen === 'friends' || screen === 'settings') && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
+
+        {justDiscoveredId && (
+          <DiscoveryPopup landmark={landmarksById[justDiscoveredId]} onClose={() => setJustDiscoveredId(null)} />
+        )}
       </View>
       <StatusBar style="dark" />
     </View>
