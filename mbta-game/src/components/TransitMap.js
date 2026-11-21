@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { PanResponder, Platform, StyleSheet, View } from 'react-native';
 import Svg, { Defs, G, Path, Pattern, Rect, Text as SvgText } from 'react-native-svg';
 
-import { greenBounds, stations, tracks } from '../data/greenLine';
+import { greenBounds, stations, stationsById, tracks } from '../data/greenLine';
 import {
   FONT_TITLE,
   LINE_PIXEL_COLORS,
@@ -18,7 +18,8 @@ import {
   stampSprite,
   topEdge,
 } from '../theme/pixel';
-import PlayerTrolley from './PlayerTrolley';
+import JunctionSigns, { SIGN_CLEAR_RADIUS, hitSign, layoutSigns } from './JunctionSigns';
+import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
@@ -86,6 +87,9 @@ const TransitMap = forwardRef(function TransitMap(
   cameraRef.current = camera;
   sizeRef.current = size;
   onSelectRef.current = onSelectStation;
+  const onSignRef = useRef(onSignPress);
+  onSignRef.current = onSignPress;
+  const placedSignsRef = useRef([]);
 
   const applyCamera = useCallback((next) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
@@ -207,8 +211,13 @@ const TransitMap = forwardRef(function TransitMap(
       onPanResponderRelease: () => {
         const g = gesture.current;
         if (g && !g.moved && g.tap) {
-          const hit = hitTest(g.tap.x, g.tap.y);
-          onSelectRef.current?.(hit ? hit.id : null);
+          const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
+          if (sign) {
+            onSignRef.current?.(sign.id);
+          } else {
+            const hit = hitTest(g.tap.x, g.tap.y);
+            onSelectRef.current?.(hit ? hit.id : null);
+          }
         }
         gesture.current = null;
       },
@@ -294,7 +303,8 @@ const TransitMap = forwardRef(function TransitMap(
     const spritePaths = Object.entries(sprites).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
-    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf };
+    const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
+    return { gox, goy, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen };
   }, [camera, size]);
 
   const scale = camera?.scale ?? 0;
@@ -356,6 +366,16 @@ const TransitMap = forwardRef(function TransitMap(
                 isPlayerStation(station) ||
                 station.name === 'Kenmore',
             )
+            // while junction signs are up, clear nameplates around the junction so the signs read clearly
+            .filter(({ station, x, y }) => {
+              if (!placedSigns.length) return true;
+              // nearest point of the nameplate box to the junction
+              const left = x;
+              const right = x + projected.spriteHalf + 4 + station.name.length * LABEL_SIZE + 8;
+              const nx = Math.min(Math.max(current.x, left), right);
+              const ny = Math.min(Math.max(current.y, y - 8), y + 8);
+              return Math.hypot(nx - current.x, ny - current.y) > SIGN_CLEAR_RADIUS;
+            })
             .map(({ station, x, y }) => (
               <Nameplate
                 key={`l-${station.id}`}

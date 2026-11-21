@@ -2,83 +2,146 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
+import { PixelButton, ui } from './ui';
 
-const ARROWS = { up: '▲', left: '◀', right: '▶', down: '▼' };
-
-/** Chunky pixel button: square corners, hard drop shadow that disappears when pressed. */
-function PixelButton({ onPress, style, children }) {
+/**
+ * Arrow pointing the way the next stop lies on the map (snapped to 8 directions),
+ * so it always matches what you see on screen.
+ */
+function MapArrow({ fromId, toId }) {
+  const a = stationsById[fromId];
+  const b = stationsById[toId];
+  // map y grows north, screen rotation is clockwise from "pointing right"
+  const deg = (Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI;
+  const snapped = Math.round(deg / 45) * 45;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.button, pressed ? styles.buttonPressed : styles.buttonUp, style]}>
-      {children}
-    </Pressable>
+    <View style={styles.arrowTile}>
+      <Text style={[styles.arrowGlyph, { transform: [{ rotate: `${snapped}deg` }] }]}>➜</Text>
+    </View>
   );
 }
 
-function NeighborCell({ dir, ids, onSelect }) {
+function BranchTiles({ branches, small }) {
   return (
-    <View style={[styles.cell, (dir === 'up' || dir === 'down') && styles.cellCenter]}>
-      <Text style={[styles.arrow, ids.length === 0 && styles.dim]}>{ARROWS[dir]}</Text>
-      {ids.length === 0 ? (
-        <Text style={[styles.body, styles.dim]}>---</Text>
-      ) : (
-        ids.map((id) => (
-          <PixelButton key={id} onPress={() => onSelect(id)} style={styles.neighbor}>
-            <Text style={styles.body} numberOfLines={1}>
-              {stationsById[id].name}
-            </Text>
-          </PixelButton>
-        ))
+    <View style={styles.optionBranches}>
+      {branches.map((b) => (
+        <View key={b} style={[styles.branchTile, small && styles.branchTileSmall]}>
+          <Text style={[styles.branchTileText, small && styles.branchTileTextSmall]}>{b}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** A way to ride from an ordinary stop: the next stop and where those trains end up. */
+function NextStopButton({ fromId, option, onSelect }) {
+  return (
+    <PixelButton onPress={() => onSelect(option.id)} style={styles.next}>
+      <MapArrow fromId={fromId} toId={option.id} />
+      <BranchTiles branches={option.branches} small />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.nextName} numberOfLines={1}>
+          {stationsById[option.id].name}
+        </Text>
+        <Text style={styles.toward} numberOfLines={1}>
+          toward {option.toward.join(' / ')}
+        </Text>
+      </View>
+      <Text style={styles.nextGo}>▶</Text>
+    </PixelButton>
+  );
+}
+
+/**
+ * When the next stop is a junction it gets a bigger banner that previews the
+ * branches you can take once you get there (not counting the way back here).
+ */
+function JunctionBanner({ fromId, option, onSelect }) {
+  const ahead = routeOptions(option.id).filter((o) => o.id !== fromId);
+  return (
+    <PixelButton onPress={() => onSelect(option.id)} style={styles.banner}>
+      <View style={styles.bannerHead}>
+        <MapArrow fromId={fromId} toId={option.id} />
+        <Text style={styles.bannerName} numberOfLines={1}>
+          {stationsById[option.id].name.toUpperCase()}
+        </Text>
+        <View style={styles.junctionTag}>
+          <Text style={styles.junctionTagText}>★ JUNCTION</Text>
+        </View>
+      </View>
+      <Text style={styles.bannerLead}>From there you can take:</Text>
+      {ahead.map((o) => (
+        <View key={o.id} style={styles.bannerRow}>
+          <BranchTiles branches={o.branches} small />
+          <Text style={styles.bannerRowText} numberOfLines={1}>
+            to {o.toward.join(' / ')}
+          </Text>
+        </View>
+      ))}
+      <Text style={styles.bannerGo}>RIDE TO {stationsById[option.id].name.toUpperCase()} ▶</Text>
+    </PixelButton>
+  );
+}
+
+/** Ordinary stop: one button per way you can go, labelled by destination instead of arrows. */
+function NextStops({ station, onSelect }) {
+  const options = routeOptions(station.id);
+  return (
+    <View style={styles.nextList}>
+      {options.map((o) =>
+        isJunction(o.id) ? (
+          <JunctionBanner key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
+        ) : (
+          <NextStopButton key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
+        ),
       )}
+      {options.length === 1 && <Text style={styles.hint}>End of the line. The only way is back.</Text>}
     </View>
   );
 }
 
 /**
- * At a junction the rider picks a branch instead of an arrow. The stop they came from
- * is split out as a separate "back" button; every other connection is a choice.
+ * At a junction the choices are signs on the map. This panel explains the sign
+ * the rider tapped: which trains go that way, the next stop, and where they end up.
  */
-function JunctionChoices({ station, previousId, onSelect }) {
-  const options = routeOptions(station.id);
-  const back = options.find((o) => o.id === previousId);
-  const forward = options.filter((o) => o.id !== previousId);
+function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
+  const option = activeSignId ? routeOptions(station.id).find((o) => o.id === activeSignId) : null;
+  if (!option) {
+    return (
+      <View style={styles.junction}>
+        <Text style={styles.prompt}>THE LINE SPLITS!</Text>
+        <Text style={styles.hint}>Tap a sign on the map to see where it goes. Tap it again to ride.</Text>
+      </View>
+    );
+  }
+  const isBack = option.id === previousId;
+  const trains = option.branches.length === 1 ? `${option.branches[0]} TRAIN` : `${option.branches.join(' · ')} TRAINS`;
   return (
     <View style={styles.junction}>
-      <Text style={styles.prompt}>THE LINE SPLITS! WHERE TO?</Text>
-      {forward.map((o) => (
-        <PixelButton key={o.id} onPress={() => onSelect(o.id)} style={styles.option}>
-          <View style={styles.optionBranches}>
-            {o.branches.map((b) => (
-              <View key={b} style={styles.branchTile}>
-                <Text style={styles.branchTileText}>{b}</Text>
-              </View>
-            ))}
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.optionName} numberOfLines={1}>
-              {stationsById[o.id].name.toUpperCase()}
-            </Text>
-            <Text style={styles.optionToward} numberOfLines={1}>
-              to {o.toward.join(' / ')}
-            </Text>
-          </View>
-          <Text style={styles.cursor}>▶</Text>
-        </PixelButton>
-      ))}
-      {back && (
-        <PixelButton onPress={() => onSelect(back.id)} style={styles.back}>
-          <Text style={styles.backText} numberOfLines={1}>
-            ◀ BACK TO {stationsById[back.id].name.toUpperCase()}
+      <View style={styles.infoRow}>
+        <BranchTiles branches={option.branches} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.prompt}>{isBack ? `BACK · ${trains}` : trains}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>
+            Next stop: {stationsById[option.id].name}
           </Text>
+          <Text style={styles.infoText} numberOfLines={1}>
+            Toward {option.toward.join(' / ')}
+          </Text>
+        </View>
+        <PixelButton onPress={() => onSelect(option.id)} style={styles.go}>
+          <Text style={styles.goText}>GO ▶</Text>
         </PixelButton>
-      )}
+      </View>
+      <Text style={styles.hint}>Tap the gold sign again to ride.</Text>
     </View>
   );
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
-export default function StationCard({ station, previousId, onSelect, onClose }) {
+export default function StationCard({ station, previousId, activeSignId, onSelect, onClose, onLayout }) {
   return (
-    <View style={styles.frame}>
+    <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>T</Text>
@@ -106,37 +169,16 @@ export default function StationCard({ station, previousId, onSelect, onClose }) 
       </View>
 
       {isJunction(station.id) ? (
-        <JunctionChoices station={station} previousId={previousId} onSelect={onSelect} />
+        <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />
       ) : (
-        <View style={styles.pad}>
-          <NeighborCell dir="up" ids={station.up} onSelect={onSelect} />
-          <View style={styles.middleRow}>
-            <NeighborCell dir="left" ids={station.left} onSelect={onSelect} />
-            <NeighborCell dir="right" ids={station.right} onSelect={onSelect} />
-          </View>
-          <NeighborCell dir="down" ids={station.down} onSelect={onSelect} />
-        </View>
+        <NextStops station={station} onSelect={onSelect} />
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // RPG-style dialog box: square corners, double border, hard offset shadow
-  frame: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 16,
-    backgroundColor: PALETTE.night,
-    borderWidth: 4,
-    borderColor: PALETTE.panelEdge,
-    outlineWidth: 3,
-    outlineColor: PALETTE.ink,
-    outlineStyle: 'solid',
-    boxShadow: `6px 6px 0px ${PALETTE.ink}`,
-    padding: 12,
-  },
+  frame: { position: 'absolute', left: 12, right: 12, bottom: 16, padding: 12 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   badge: {
     width: 30,
@@ -154,23 +196,15 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   chip: { backgroundColor: PALETTE.green, borderWidth: 2, borderColor: PALETTE.greenLight, paddingHorizontal: 6, paddingVertical: 4 },
   chipText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.white },
-  body: { fontFamily: FONT_BODY, fontSize: 19, color: PALETTE.ink },
-  dim: { color: '#6b7393' },
 
-  button: { backgroundColor: PALETTE.white, borderWidth: 3, borderColor: PALETTE.ink },
-  buttonUp: { boxShadow: `3px 3px 0px ${PALETTE.ink}` },
-  buttonPressed: { transform: [{ translateX: 3 }, { translateY: 3 }], backgroundColor: PALETTE.gold },
-
-  pad: { marginTop: 12, gap: 6 },
-  middleRow: { flexDirection: 'row', gap: 6 },
-  cell: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cellCenter: { justifyContent: 'center' },
-  arrow: { fontSize: 14, color: PALETTE.gold, width: 16, textAlign: 'center' },
-  neighbor: { paddingHorizontal: 6, paddingVertical: 1, flexShrink: 1 },
 
   junction: { marginTop: 12, gap: 8 },
+  hint: { fontFamily: FONT_BODY, fontSize: 18, color: '#b7c0d8' },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  infoText: { fontFamily: FONT_BODY, fontSize: 18, color: PALETTE.white },
+  go: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: PALETTE.green },
+  goText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
   prompt: { fontFamily: FONT_TITLE, fontSize: 8, lineHeight: 12, color: PALETTE.gold, marginBottom: 2 },
-  option: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingVertical: 6 },
   optionBranches: { flexDirection: 'row', gap: 3, minWidth: 24 },
   branchTile: {
     width: 22,
@@ -182,9 +216,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   branchTileText: { fontFamily: FONT_TITLE, fontSize: 9, color: PALETTE.white },
-  optionName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
-  optionToward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
-  cursor: { fontSize: 14, color: PALETTE.ink },
-  back: { alignItems: 'center', paddingVertical: 8, backgroundColor: '#c9cfe0' },
-  backText: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.ink },
+  branchTileSmall: { width: 18, height: 18 },
+  branchTileTextSmall: { fontSize: 8 },
+
+  nextList: { marginTop: 12, gap: 8 },
+  arrowTile: {
+    width: 24,
+    height: 24,
+    backgroundColor: PALETTE.night,
+    borderWidth: 2,
+    borderColor: PALETTE.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowGlyph: { fontSize: 14, lineHeight: 16, color: PALETTE.gold, fontWeight: '900' },
+  next: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  nextName: { fontFamily: FONT_TITLE, fontSize: 9, lineHeight: 14, color: PALETTE.ink },
+  toward: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
+  nextGo: { fontSize: 14, color: PALETTE.ink },
+
+  banner: { padding: 10, gap: 4, backgroundColor: '#fff6d6', borderColor: PALETTE.ink },
+  bannerHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannerName: { flexShrink: 1, fontFamily: FONT_TITLE, fontSize: 12, lineHeight: 18, color: PALETTE.ink },
+  junctionTag: { backgroundColor: PALETTE.gold, borderWidth: 2, borderColor: PALETTE.ink, paddingHorizontal: 5, paddingVertical: 3 },
+  junctionTagText: { fontFamily: FONT_TITLE, fontSize: 7, color: PALETTE.ink },
+  bannerLead: { fontFamily: FONT_BODY, fontSize: 17, color: '#4a5068' },
+  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannerRowText: { flex: 1, fontFamily: FONT_BODY, fontSize: 18, color: PALETTE.ink },
+  bannerGo: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.green, marginTop: 4, alignSelf: 'flex-end' },
 });

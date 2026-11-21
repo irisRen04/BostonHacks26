@@ -2,13 +2,15 @@ import { StatusBar } from 'expo-status-bar';
 import { PressStart2P_400Regular } from '@expo-google-fonts/press-start-2p';
 import { VT323_400Regular } from '@expo-google-fonts/vt323';
 import { useFonts } from 'expo-font';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRankedStops } from './src/hooks/useRankedStops'; 
-import {Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import useAvatar from './src/avatar/useAvatar';
+import GameMenu from './src/components/GameMenu';
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
-import { stationsById } from './src/data/greenLine';
+import { ComingSoonScreen, CustomizeScreen } from './src/components/screens';
+import { isJunction, routeOptions, stationsById } from './src/data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 
 export default function App() {
@@ -18,25 +20,62 @@ export default function App() {
   const [trip, setTrip] = useState({ currentId: null, previousId: null });
   const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
-const { ranked } = useRankedStops();
+  const [avatar, setAvatar] = useAvatar();
+  // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
+  const [screen, setScreen] = useState(null);
+  // The corner avatar button sits just above the stop card when one is showing.
+  const [cardHeight, setCardHeight] = useState(0);
+  const menuBottom = selected ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
+
+  // At a junction: the sign the rider has tapped once (tapping it again rides there).
+  const [activeSignId, setActiveSignId] = useState(null);
+
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
+    setActiveSignId(null);
     setTrip({ currentId: id, previousId: null });
     if (id) mapRef.current?.focusStation(stationsById[id]);
   }, []);
 
   // Riding to a connected stop from the card remembers where we came from and follows the rider.
   const rideTo = useCallback((id) => {
+    setActiveSignId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
     mapRef.current?.focusStation(stationsById[id]);
   }, []);
+
+  // One sign per way out of a junction; the way you came in is the BACK sign.
+  const signs = useMemo(() => {
+    if (!selectedId || !isJunction(selectedId)) return null;
+    return routeOptions(selectedId).map((o) => ({
+      id: o.id,
+      kind: o.id === trip.previousId ? 'back' : 'branch',
+      branches: o.branches,
+    }));
+  }, [selectedId, trip.previousId]);
+
+  const pressSign = useCallback(
+    (id) => {
+      if (id === activeSignId) rideTo(id);
+      else setActiveSignId(id);
+    },
+    [activeSignId, rideTo],
+  );
 
   if (!fontsLoaded) return <View style={styles.page} />;
 
   return (
     <View style={styles.page}>
       <View style={styles.phone}>
-        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt}  playerStationName={ranked[0]?.name} />
+        <TransitMap
+          ref={mapRef}
+          selectedId={selectedId}
+          onSelectStation={placeAt}
+          avatar={avatar}
+          signs={signs}
+          activeSignId={activeSignId}
+          onSignPress={pressSign}
+        />
 
         <View style={styles.header} pointerEvents="none">
           <View style={styles.lineBadge}>
@@ -57,10 +96,19 @@ const { ranked } = useRankedStops();
           <StationCard
             station={selected}
             previousId={trip.previousId}
+            activeSignId={activeSignId}
             onSelect={rideTo}
             onClose={() => placeAt(null)}
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
           />
         )}
+
+        <GameMenu avatar={avatar} bottom={menuBottom} onOpen={setScreen} />
+
+        {screen === 'customize' && (
+          <CustomizeScreen avatar={avatar} onSave={setAvatar} onClose={() => setScreen(null)} />
+        )}
+        {screen && screen !== 'customize' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
       </View>
       <StatusBar style="dark" />
     </View>
@@ -91,6 +139,7 @@ function StartHint() {
 }
 
 const isWeb = Platform.OS === 'web';
+const CARD_BOTTOM = 16; // matches StationCard's bottom offset
 
 const styles = StyleSheet.create({
   // On the web, show the app inside a phone-sized frame; on devices it fills the screen.
@@ -144,9 +193,11 @@ const styles = StyleSheet.create({
   zoomText: { fontFamily: FONT_TITLE, fontSize: 12, color: PALETTE.ink },
   hint: {
     position: 'absolute',
-    left: 24,
-    right: 24,
-    bottom: 32,
+    left: 14,
+    right: 92, // leave room for the avatar menu button
+    bottom: CARD_BOTTOM,
+    height: 64,
+    justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: PALETTE.night,
     borderWidth: 3,
