@@ -3,7 +3,8 @@ import { PressStart2P_400Regular } from '@expo-google-fonts/press-start-2p';
 import { VT323_400Regular } from '@expo-google-fonts/vt323';
 import { useFonts } from 'expo-font';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRankedStops } from './src/hooks/useRankedStops'; 
+import {Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import StationCard from './src/components/StationCard';
 import TransitMap from './src/components/TransitMap';
@@ -17,7 +18,7 @@ export default function App() {
   const [trip, setTrip] = useState({ currentId: null, previousId: null });
   const selectedId = trip.currentId;
   const selected = selectedId ? stationsById[selectedId] : null;
-
+const { ranked } = useRankedStops();
   // Tapping a stop on the map drops the rider there (no previous stop yet).
   const placeAt = useCallback((id) => {
     setTrip({ currentId: id, previousId: null });
@@ -35,7 +36,7 @@ export default function App() {
   return (
     <View style={styles.page}>
       <View style={styles.phone}>
-        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt} />
+        <TransitMap ref={mapRef} selectedId={selectedId} onSelectStation={placeAt}  playerStationName={ranked[0]?.name} />
 
         <View style={styles.header} pointerEvents="none">
           <View style={styles.lineBadge}>
