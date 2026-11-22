@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-
+import { playMusic, playSfx } from '../audio/sounds';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 
 // ---- tuning ----
@@ -305,13 +305,19 @@ const freshGame = () => ({
 });
 
 export default function LobsterGame({ level = 1, onWin, onClose }) {
-  const reward = Math.floor((1/20) * Math.floor(level));
+  const reward = Math.floor((1 / 20) * Math.floor(level));
   const game = useRef(freshGame());
   const phaseRef = useRef('intro');
   const [phase, setPhaseState] = useState('intro'); // intro | ready | playing | dive | won | lost
   const [, setFrame] = useState(0);
   const onWinRef = useRef(onWin);
   onWinRef.current = onWin;
+
+  // minigame music while this popup is open, map music when it closes
+  useEffect(() => {
+    playMusic('minigame');
+    return () => playMusic('gameplay');
+  }, []);
 
   const setPhase = (p) => {
     phaseRef.current = p;
@@ -439,7 +445,7 @@ export default function LobsterGame({ level = 1, onWin, onClose }) {
               </Svg>
             </View>
             <Text style={styles.body}>The chef wants you for dinner!</Text>
-            <Text style={styles.body}>Hop the boiling pots for 45 seconds,</Text>
+            <Text style={styles.body}>Hop the boiling pots for {DURATION} seconds,</Text>
             <Text style={styles.body}>then leap out the window into the ocean.</Text>
             <Text style={styles.reward}>REWARD: {reward} XP</Text>
             <View style={styles.row}>
@@ -485,10 +491,18 @@ export default function LobsterGame({ level = 1, onWin, onClose }) {
   );
 }
 
+// The JUMP button uses onPressIn only, so it stays silent; every other button clicks.
 function Btn({ label, onPress, onPressIn, gold, wide }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? (e) => {
+              playSfx('click');
+              onPress(e);
+            }
+          : undefined
+      }
       onPressIn={onPressIn}
       style={({ pressed }) => [
         styles.btn,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
+import { playMusic, playSfx } from '../audio/sounds';
 import { FONT_BODY, FONT_TITLE, PALETTE, squaresToPath, stampSprite } from '../theme/pixel';
 
 const N = 15; // board is N x N cells
@@ -82,7 +83,11 @@ export default function DuckGame({ level = 1, avatar, renderHead, onWin, onClose
     setPhase('ready');
     setFrame((f) => f + 1);
   };
-
+  // minigame music while this popup is open, map music when it closes
+  useEffect(() => {
+    playMusic('minigame');
+    return () => playMusic('gameplay');
+  }, []);
   // game loop
   useEffect(() => {
     if (phase !== 'playing') return undefined;
@@ -241,7 +246,10 @@ export default function DuckGame({ level = 1, avatar, renderHead, onWin, onClose
 function Btn({ label, onPress, gold, small }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={(e) => {
+        if (!small) playSfx('click');
+        onPress?.(e);
+      }}
       style={({ pressed }) => [
         styles.btn,
         small && { width: 48, height: 40, paddingHorizontal: 0 },

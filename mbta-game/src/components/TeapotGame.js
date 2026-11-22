@@ -1,6 +1,6 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-
+import { playMusic, playSfx } from '../audio/sounds';
 import {
   DURATION,
   FIELD_H,
@@ -341,7 +341,10 @@ function Arena({ renderPlayer, onEnd }) {
 function PixelButton({ label, onPress, primary }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={(e) => {
+        playSfx('click');
+        onPress?.(e);
+      }}
       style={({ pressed }) => [
         styles.btn,
         primary && styles.btnPrimary,
@@ -366,6 +369,12 @@ export default function TeapotGame({ level = 1, renderPlayer, onWin, onClose }) 
   const [result, setResult] = useState(null);
   const reward = xpReward(level);
   const lvl = Math.max(1, Math.floor(level) || 1);
+
+  // minigame music while this popup is open, map music when it closes
+  useEffect(() => {
+    playMusic('moreMinigame');
+    return () => playMusic('gameplay');
+  }, []);
 
   const start = useCallback(() => {
     setRound((r) => r + 1);

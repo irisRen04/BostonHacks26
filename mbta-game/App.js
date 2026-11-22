@@ -16,7 +16,7 @@ import TransitMap from './src/components/TransitMap';
 import TeapotGame from './src/components/TeapotGame';
 import DuckGame from './src/components/DuckGame';
 import LobsterGame from './src/components/LobsterGame';
-
+import SplashScreen from './src/components/SplashScreen';
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
 import { landmarks, landmarksById } from './src/data/landmarks';
@@ -40,14 +40,15 @@ const northStationId = stationByName.northstation?.id;
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
-    // Music: loading track while fonts load, then the gameplay track
+
+  // Music: loading track while fonts load, then the gameplay track
   useEffect(() => {
     initAudio();
   }, []);
   useEffect(() => {
     playMusic(fontsLoaded ? 'gameplay' : 'loading');
   }, [fontsLoaded]);
-  
+
   const mapRef = useRef(null);
   // The rider's position: the stop they're at, and the stop they just came from.
   const [trip, setTrip] = useState({ currentId: null, previousId: null });
@@ -60,23 +61,23 @@ export default function App() {
   const [discoveryQueue, setDiscoveryQueue] = useState([]);
   const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
+  const [started, setStarted] = useState(false);
   const [screen, setScreen] = useState(null);
+
+  // ---- minigames ----
   const [showTeapotGame, setShowTeapotGame] = useState(false);
   const [duckOpen, setDuckOpen] = useState(false);
+  const [lobsterOpen, setLobsterOpen] = useState(false);
   useEffect(() => {
     if (selectedId && selectedId === boylstonId) setDuckOpen(true);
   }, [selectedId]);
-
-  const [lobsterOpen, setLobsterOpen] = useState(false);
   useEffect(() => {
     if (selectedId && selectedId === northStationId) setLobsterOpen(true);
   }, [selectedId]);
-
   useEffect(() => {
-    if (selected?.name === 'Government Center') {
-      setShowTeapotGame(true);
-    }
+    if (selected?.name === 'Government Center') setShowTeapotGame(true);
   }, [selectedId]);
+
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
   // Live Green Line trains, and the one whose card is open.
@@ -108,6 +109,7 @@ export default function App() {
         Math.hypot(t.to.x - selected.x, t.to.y - selected.y) < NEARBY_M,
     );
   }, [live.trains, selected, waitingFor?.trainId, trainId]);
+
   // How much of the map the open card covers, so the map keeps the stop visible above it.
   const cardOpen = !!(selected || landmark || train);
   const cardInset = cardOpen ? CARD_BOTTOM + cardHeight + 8 : 0;
@@ -230,6 +232,22 @@ export default function App() {
     setDiscoveryQueue((q) => [...q, ...found.filter((id) => !q.includes(id))]);
   }, [selectedId, discovered, discover]);
 
+  // Chimes each time a new landmark popup shows up
+  const popupId = discoveryQueue[0];
+  useEffect(() => {
+    if (popupId) playSfx('chimes');
+  }, [popupId]);
+
+  // Level-up sound: only when the level goes up, not when saved progress loads
+  const prevLevel = useRef(null);
+  useEffect(() => {
+    if (!loaded) return;
+    if (prevLevel.current !== null && progress.level > prevLevel.current) {
+      setTimeout(() => playSfx('levelup'), 1700); // after the discovery chimes
+    }
+    prevLevel.current = progress.level;
+  }, [loaded, progress.level]);
+
   const openLandmark = useCallback((id) => {
     setTrainId(null);
     setLandmarkId(id);
@@ -253,8 +271,9 @@ export default function App() {
     },
     [activeSignId, rideTo],
   );
- 
+
   if (!fontsLoaded) return <View style={styles.page} />;
+  if (!started) return <SplashScreen onStart={() => setStarted(true)} />;
 
   return (
     <View style={styles.page}>
@@ -262,7 +281,10 @@ export default function App() {
         <TransitMap
           ref={mapRef}
           selectedId={selectedId}
-          onSelectStation={placeAt}
+          onSelectStation={(id) => {
+            if (id) playSfx('click');
+            placeAt(id);
+          }}
           avatar={avatar}
           signs={signs}
           activeSignId={activeSignId}
@@ -279,49 +301,40 @@ export default function App() {
           }}
         />
 
-        <View style={styles.header} pointerEvents="none">
-          <View style={styles.lineBadge}>
-            <Text style={styles.lineBadgeText}>GL</Text>
-          </View>
-          <Text style={styles.title}>GREEN LINE</Text>
-          <LiveBadge status={live.status} count={live.trains.length} />
-        </View>
-
-        {/* XP bar */}
-        <View style={styles.xpBar} pointerEvents="none">
-          <Text style={styles.xpLevel}>LV {progress.level}</Text>
-          <View style={styles.xpTrack}>
-            <View style={[styles.xpFill, { width: `${(progress.xpIntoLevel / progress.xpForLevel) * 100}%` }]} />
-          </View>
-          <Text style={styles.xpText}>
-            {progress.xp} XP · {progress.found}/{progress.total}
-          </Text>
-        </View>
-
-        {info && (
-          <View style={styles.distBadge} pointerEvents="none">
-            <Text style={styles.distLabel}>{isNearest ? 'NEAREST STOP' : 'SELECTED STOP'}</Text>
-            <Text style={styles.distName}>{info.station.name.toUpperCase()}</Text>
-            {isNearest ? (
-              <Text style={styles.distSub}>
-                {info.exact ? '' : '~'}
-                {formatDistance(info.meters)} walk · {info.walkMinutes} min
-              </Text>
-            ) : (
-              <>
+        {/* top-left stack: stop info first, XP bar underneath */}
+        <View style={styles.topStack} pointerEvents="none">
+          {info && (
+            <View style={styles.distBadge}>
+              <Text style={styles.distLabel}>{isNearest ? 'NEAREST STOP' : 'SELECTED STOP'}</Text>
+              <Text style={styles.distName}>{info.station.name.toUpperCase()}</Text>
+              {isNearest ? (
                 <Text style={styles.distSub}>
-                  🚶 {formatDistance(info.straightMeters)} straight-line away
+                  {info.exact ? '' : '~'}
+                  {formatDistance(info.meters)} walk · {info.walkMinutes} min
                 </Text>
-                {ride ? (
+              ) : (
+                <>
                   <Text style={styles.distSub}>
-                    🚆 {ride.stops} stops · {formatDistance(ride.meters)} · ~{ride.minutes} min
+                    🚶 {formatDistance(info.straightMeters)} straight-line away
                   </Text>
-                ) : null}
-                {totalMin ? <Text style={styles.distSub}>Total ~{totalMin} min</Text> : null}
-              </>
-            )}
+                  {ride ? (
+                    <Text style={styles.distSub}>
+                      🚆 {ride.stops} stops · {formatDistance(ride.meters)} · ~{ride.minutes} min
+                    </Text>
+                  ) : null}
+                  {totalMin ? <Text style={styles.distSub}>Total ~{totalMin} min</Text> : null}
+                </>
+              )}
+            </View>
+          )}
+
+          <View style={styles.xpBar}>
+            <Text style={styles.xpLevel}>LV {progress.level}</Text>
+            <View style={styles.xpTrack}>
+              <View style={[styles.xpFill, { width: `${(progress.xpIntoLevel / progress.xpForLevel) * 100}%` }]} />
+            </View>
           </View>
-        )}
+        </View>
 
         <View style={styles.zoom}>
           <ZoomButton label="+" onPress={() => mapRef.current?.zoomIn()} />
@@ -389,8 +402,8 @@ export default function App() {
             found={progress.found}
             setName={setName}
             addFriend={addFriend}
-            onClose={() => setScreen(null)}
             removeFriend={removeFriend}
+            onClose={() => setScreen(null)}
           />
         )}
         {screen === 'settings' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
@@ -475,15 +488,11 @@ function StartHint() {
       <Text style={[styles.hintText, !on && { opacity: 0 }]}>▶ TAP A STOP TO START</Text>
       <Text style={styles.hintSub}>pinch or scroll to zoom · drag to pan</Text>
     </View>
-    
   );
- 
 }
 
 const isWeb = Platform.OS === 'web';
-const TOP = isWeb ? 16 : 56;      // header
-const XP_TOP = TOP + 56;          // XP box sits below the header
-const DIST_TOP = XP_TOP + 76;     // nearest-stop box sits below the XP box
+const TOP = isWeb ? 16 : 56; // header
 const CARD_BOTTOM = 16; // matches StationCard's bottom offset
 const SIGN_ROOM = 96; // extra space kept below a junction stop for its signposts
 const NEARBY_M = 1500; // trains within this many meters of your stop stay on the map
@@ -514,10 +523,16 @@ const styles = StyleSheet.create({
     paddingLeft: 6,
     paddingRight: 12,
   },
- xpBar: {
+  // stop info box on top, XP bar underneath
+  topStack: {
     position: 'absolute',
-    top: XP_TOP,
+    top: TOP,
     left: 14,
+    right: 72, // stop short of the zoom buttons
+    gap: 8,
+  },
+  xpBar: {
+    alignSelf: 'flex-start',
     width: 200,
     backgroundColor: PALETTE.night,
     borderWidth: 3,
@@ -530,10 +545,7 @@ const styles = StyleSheet.create({
   xpTrack: { height: 6, backgroundColor: PALETTE.ink, marginVertical: 3 },
   xpFill: { height: 6, backgroundColor: PALETTE.green },
   xpText: { fontFamily: FONT_BODY, fontSize: 15, color: '#b7c0d8' },
- distBadge: {
-    position: 'absolute',
-    top: DIST_TOP,
-    left: 14,
+  distBadge: {
     backgroundColor: PALETTE.night,
     borderWidth: 3,
     borderColor: PALETTE.panelEdge,

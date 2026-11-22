@@ -7,69 +7,101 @@ const SOURCES = {
   minigame: require('../../assets/audio/minigame.mp3'),
   moreMinigame: require('../../assets/audio/more-minigame.mp3'),
   click: require('../../assets/audio/click.mp3'),
+  levelup: require('../../assets/audio/levelup.mp3'),
+  chimes: require('../../assets/audio/morechimes.mp3'),
 };
 
-// Volumes run from 0 to 1. Turn these up or down to taste.
-export const MUSIC_VOLUME = 0.01; // background music (quiet)
-export const SFX_VOLUME = 1.0; // clicks (full)
+export const MUSIC_VOLUME = 0.05;
+export const SFX_VOLUME = 1.0;
 
-const players = {};
-let current = null;
+// Higher number = more important. A sound can't interrupt a more important one that's still playing.
+const PRIORITY = { click: 1, chimes: 2, levelup: 3 };
+// Roughly how long each sound lasts, in seconds. Adjust if a sound gets cut off or blocks others too long.
+const LENGTH = { click: 0.4, chimes: 1.6, levelup: 2.2 };
+
+const musicPlayers = {};
+let currentMusic = null;
 let muted = false;
+let activeSfx = null; // { player, name, until }
 
-function get(name) {
-  if (!players[name]) players[name] = createAudioPlayer(SOURCES[name]);
-  return players[name];
+function getMusic(name) {
+  if (!musicPlayers[name]) musicPlayers[name] = createAudioPlayer(SOURCES[name]);
+  return musicPlayers[name];
 }
 
-// Call once at startup: sound plays on silent mode, and the click is loaded ahead of time
 export function initAudio() {
-  get('click');
   return setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
 }
 
 export function playMusic(name, volume = MUSIC_VOLUME) {
-  if (current === name) return;
+  if (currentMusic === name) return;
   stopMusic();
-  current = name;
+  currentMusic = name;
   try {
-    const p = get(name);
+    const p = getMusic(name);
     p.loop = true;
     p.volume = volume;
     p.seekTo(0);
     if (!muted) p.play();
+    p.volume = volume;
   } catch (e) {
     console.log('music error', e.message);
   }
 }
 
 export function stopMusic() {
-  if (!current) return;
+  if (!currentMusic) return;
   try {
-    get(current).pause();
+    getMusic(currentMusic).pause();
   } catch {}
-  current = null;
+  currentMusic = null;
 }
 
-// Short one-shot sound. Rewinds first so rapid clicks all play.
-export async function playSfx(name = 'click', volume = SFX_VOLUME) {
-  if (muted) return;
+function dropActive() {
+  if (!activeSfx) return;
   try {
-    const p = get(name);
-    p.volume = volume;
-    await p.seekTo(0);
-    p.play();
+    activeSfx.player.pause();
+    activeSfx.player.remove();
+  } catch {}
+  activeSfx = null;
+}
+
+// One sound effect at a time. Returns true if it played.
+export function playSfx(name = 'click', volume = SFX_VOLUME) {
+  if (muted || !SOURCES[name]) return false;
+  const now = Date.now();
+
+  if (activeSfx && now < activeSfx.until) {
+    // something is still playing: only replace it with an equal or more important sound
+    if ((PRIORITY[name] ?? 1) < (PRIORITY[activeSfx.name] ?? 1)) return false;
+    dropActive();
+  } else {
+    dropActive();
+  }
+
+  try {
+    const player = createAudioPlayer(SOURCES[name]);
+    player.volume = volume;
+    player.play();
+    activeSfx = { player, name, until: now + (LENGTH[name] ?? 1) * 1000 };
+    const mine = activeSfx;
+    setTimeout(() => {
+      if (activeSfx === mine) dropActive();
+    }, (LENGTH[name] ?? 1) * 1000 + 1500);
+    return true;
   } catch (e) {
     console.log('sfx error', e.message);
+    return false;
   }
 }
 
 export function setMuted(value) {
   muted = value;
-  if (!current) return;
+  if (value) dropActive();
+  if (!currentMusic) return;
   try {
-    if (value) get(current).pause();
-    else get(current).play();
+    if (value) getMusic(currentMusic).pause();
+    else getMusic(currentMusic).play();
   } catch {}
 }
 
