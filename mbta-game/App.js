@@ -15,6 +15,7 @@ import TransitMap from './src/components/TransitMap';
 
 import TeapotGame from './src/components/TeapotGame';
 import DuckGame from './src/components/DuckGame';
+import LobsterGame from './src/components/LobsterGame';
 
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
@@ -35,6 +36,7 @@ import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 const normName = (s) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const stationByName = Object.fromEntries(stations.map((s) => [normName(s.name), s]));
 const boylstonId = stationByName.boylston?.id;
+const northStationId = stationByName.northstation?.id;
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
@@ -55,6 +57,11 @@ export default function App() {
   const [duckOpen, setDuckOpen] = useState(false);
   useEffect(() => {
     if (selectedId && selectedId === boylstonId) setDuckOpen(true);
+  }, [selectedId]);
+
+  const [lobsterOpen, setLobsterOpen] = useState(false);
+  useEffect(() => {
+    if (selectedId && selectedId === northStationId) setLobsterOpen(true);
   }, [selectedId]);
 
   useEffect(() => {
@@ -380,6 +387,15 @@ export default function App() {
               progress.addMinigameXP(earnedXP);
             }}
             onClose={() => setShowTeapotGame(false)}
+          />
+        )}
+        {lobsterOpen && (
+          <LobsterGame
+            level={progress.level}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setLobsterOpen(false)}
           />
         )}
         {duckOpen && (

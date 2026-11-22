@@ -59,7 +59,7 @@ function freshGame() {
 }
 
 export default function DuckGame({ level = 1, avatar, renderHead, onWin, onClose }) {
-  const reward = 40 * 2 ** (level - 1);
+  const reward = 40 + 2 * (level - 1);
   const game = useRef(freshGame());
   const phaseRef = useRef('intro');
   const [phase, setPhaseState] = useState('intro'); // intro | ready | playing | won | lost

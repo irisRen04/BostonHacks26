@@ -4,7 +4,7 @@
 export const FIELD_W = 320;
 export const FIELD_H = 420;
 export const GROUND_Y = 372; // the floor the player stands on
-export const DURATION = 90; // seconds: 1:30
+export const DURATION = 60; // seconds: 1:00
 export const MAX_MISSES = 8; // this many drops hitting the floor and you drown
 export const WATER_STEP = 14; // px the water rises per missed drop
 
