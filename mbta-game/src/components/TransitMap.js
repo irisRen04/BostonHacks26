@@ -166,6 +166,7 @@ const TransitMap = forwardRef(function TransitMap(
   const onTrainRef = useRef(onTrainPress);
   onTrainRef.current = onTrainPress;
   const trainHitsRef = useRef([]);
+  const stopRadiusRef = useRef(10); // px around a stop's centre where a tap means "the stop"
 
   // The background (parks, water, sea, lines, track, stop icons) is drawn once for an
   // area twice the size of the screen around `baseCam`, then reused while you pan or
@@ -334,26 +335,25 @@ const TransitMap = forwardRef(function TransitMap(
           // what was tapped, most specific first: a sign, right on a stop, a train, a landmark, near a stop
           const inBox = (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1;
           const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
-          const exactStop = sign ? null : hitTest(g.tap.x, g.tap.y, 10);
           const T = baseXformRef.current;
           const inBaseBox = (h) => {
             const x = (g.tap.x - T.tx) / T.k;
             const y = (g.tap.y - T.ty) / T.k;
             return x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1;
           };
-          const train = sign || exactStop ? null : trainHitsRef.current.find(inBaseBox);
-          const landmark = sign || exactStop || train ? null : landmarkHitsRef.current.find(inBox);
+          const train = sign ? null : trainHitsRef.current.find(inBaseBox);
+          const exactStop = sign || train ? null : hitTest(g.tap.x, g.tap.y, stopRadiusRef.current);
+          const landmark = sign || train || exactStop ? null : landmarkHitsRef.current.find(inBox);
           if (sign) {
             onSignRef.current?.(sign.id);
-          } else if (exactStop) {
-            onSelectRef.current?.(exactStop.id);
           } else if (train) {
             onTrainRef.current?.(train.id);
+          } else if (exactStop) {
+            onSelectRef.current?.(exactStop.id);
           } else if (landmark) {
             onLandmarkRef.current?.(landmark.id);
           } else {
-            const hit = hitTest(g.tap.x, g.tap.y);
-            onSelectRef.current?.(hit ? hit.id : null);
+            // ...your existing "near a stop" fallback, unchanged
           }
         }
         gesture.current = null;
@@ -541,6 +541,7 @@ const TransitMap = forwardRef(function TransitMap(
   }, [camera, size, base, openLandmarkId]);
 
   if (projected) baseXformRef.current = { k: projected.k, tx: projected.tx, ty: projected.ty };
+  if (projected) stopRadiusRef.current = Math.max(10, projected.spriteHalf + 2);
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
   if (!liveTrains.length) trainHitsRef.current = []; // no trains drawn, nothing to tap
