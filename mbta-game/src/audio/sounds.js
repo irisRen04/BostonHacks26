@@ -9,8 +9,12 @@ const SOURCES = {
   click: require('../../assets/audio/click.mp3'),
 };
 
+// Volumes run from 0 to 1. Turn these up or down to taste.
+export const MUSIC_VOLUME = 0.01; // background music (quiet)
+export const SFX_VOLUME = 1.0; // clicks (full)
+
 const players = {};
-let current = null; // the music track that's currently selected
+let current = null;
 let muted = false;
 
 function get(name) {
@@ -18,13 +22,13 @@ function get(name) {
   return players[name];
 }
 
-// Call once at startup so sound plays even when the phone is on silent
+// Call once at startup: sound plays on silent mode, and the click is loaded ahead of time
 export function initAudio() {
+  get('click');
   return setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
 }
 
-// Looping background music. Switching tracks stops the old one.
-export function playMusic(name, volume = 0.5) {
+export function playMusic(name, volume = MUSIC_VOLUME) {
   if (current === name) return;
   stopMusic();
   current = name;
@@ -47,15 +51,17 @@ export function stopMusic() {
   current = null;
 }
 
-// Short one-shot sound, like the button click
-export function playSfx(name = 'click', volume = 0.8) {
+// Short one-shot sound. Rewinds first so rapid clicks all play.
+export async function playSfx(name = 'click', volume = SFX_VOLUME) {
   if (muted) return;
   try {
     const p = get(name);
     p.volume = volume;
-    p.seekTo(0);
+    await p.seekTo(0);
     p.play();
-  } catch {}
+  } catch (e) {
+    console.log('sfx error', e.message);
+  }
 }
 
 export function setMuted(value) {

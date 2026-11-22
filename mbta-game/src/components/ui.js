@@ -2,12 +2,18 @@
 import { Pressable, StyleSheet } from 'react-native';
 
 import { PALETTE } from '../theme/pixel';
+import { playSfx } from '../audio/sounds';
+
+
 
 /** Chunky pixel button: square corners, hard drop shadow that disappears when pressed. */
 export function PixelButton({ onPress, style, children, accessibilityLabel }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={(e) => {
+        playSfx('click');
+        onPress?.(e);
+      }}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       style={({ pressed }) => [ui.button, pressed ? ui.buttonPressed : ui.buttonUp, style]}

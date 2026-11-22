@@ -72,8 +72,7 @@ export default function App() {
     return list.find((a) => a.id === watchId) ?? list[0] ?? null;
   }, [arrivals.arrivals, live.trains, watchId]);
   const waitingFor = watched ? { trainId: watched.vehicleId, minutes: watched.minutes } : null;
-console.log('landmarks:', landmarks.length, landmarks.map((l) => l.id).join(', '));
-console.log('stations:', stations.map((s) => s.id).join(', '));
+
   // Fewer trains on the map: with a stop selected, only trains on its branches or close by
   // (plus your train and the one whose card is open). With no stop, every train shows.
   const visibleTrains = useMemo(() => {
@@ -231,7 +230,7 @@ console.log('stations:', stations.map((s) => s.id).join(', '));
     },
     [activeSignId, rideTo],
   );
-
+ 
   if (!fontsLoaded) return <View style={styles.page} />;
 
   return (
