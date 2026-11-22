@@ -12,6 +12,7 @@ import LeaderboardScreen from './src/components/LeaderboardScreen';
 import StationCard from './src/components/StationCard';
 import TrainCard from './src/components/TrainCard';
 import TransitMap from './src/components/TransitMap';
+import TeapotGame from './src/components/TeapotGame';
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
 import { landmarks, landmarksById } from './src/data/landmarks';
@@ -46,6 +47,13 @@ export default function App() {
   const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
+  const [showTeapotGame, setShowTeapotGame] = useState(false);
+
+  useEffect(() => {
+    if (selected?.name === 'Government Center') {
+      setShowTeapotGame(true);
+    }
+  }, [selectedId]);
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
   // Live Green Line trains, and the one whose card is open.
@@ -355,6 +363,15 @@ export default function App() {
             landmark={landmarksById[discoveryQueue[0]]}
             remaining={discoveryQueue.length - 1}
             onClose={() => setDiscoveryQueue((q) => q.slice(1))}
+          />
+        )}
+        {showTeapotGame && (
+          <TeapotGame
+            level={progress.level}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setShowTeapotGame(false)}
           />
         )}
       </View>

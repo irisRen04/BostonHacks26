@@ -10,7 +10,7 @@ export const xpForVisit = (n) => BASE_XP * Math.min(2 ** (n - 1), MAX_MULTIPLIER
 // XP the NEXT visit to this landmark would give
 export const nextVisitXp = (visits) => xpForVisit((visits ?? 0) + 1);
 
-export function computeProgress(visits) {
+export function computeProgress(visits, bonusXP = 0) {
   let xp = 0;
   let found = 0;
   for (const l of landmarks) {
@@ -18,6 +18,7 @@ export function computeProgress(visits) {
     if (n > 0) found += 1;
     for (let k = 1; k <= n; k++) xp += xpForVisit(k);
   }
+  xp += bonusXP;
   return {
     xp,
     found,
