@@ -12,7 +12,10 @@ import LeaderboardScreen from './src/components/LeaderboardScreen';
 import StationCard from './src/components/StationCard';
 import TrainCard from './src/components/TrainCard';
 import TransitMap from './src/components/TransitMap';
+
 import TeapotGame from './src/components/TeapotGame';
+import DuckGame from './src/components/DuckGame';
+
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
 import { landmarks, landmarksById } from './src/data/landmarks';
@@ -31,6 +34,7 @@ import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 // "Park Street" vs "park st." shouldn't break name matching
 const normName = (s) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const stationByName = Object.fromEntries(stations.map((s) => [normName(s.name), s]));
+const boylstonId = stationByName.boylston?.id;
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
@@ -48,6 +52,10 @@ export default function App() {
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
   const [showTeapotGame, setShowTeapotGame] = useState(false);
+  const [duckOpen, setDuckOpen] = useState(false);
+  useEffect(() => {
+    if (selectedId && selectedId === boylstonId) setDuckOpen(true);
+  }, [selectedId]);
 
   useEffect(() => {
     if (selected?.name === 'Government Center') {
@@ -372,6 +380,17 @@ export default function App() {
               progress.addMinigameXP(earnedXP);
             }}
             onClose={() => setShowTeapotGame(false)}
+          />
+        )}
+        {duckOpen && (
+          <DuckGame
+            level={progress.level}
+            avatar={avatar}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setDuckOpen(false)}
+            // renderHead={(size) => <AvatarSprite avatar={avatar} size={size} />}
           />
         )}
       </View>
