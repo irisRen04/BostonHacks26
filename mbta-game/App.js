@@ -12,6 +12,11 @@ import LeaderboardScreen from './src/components/LeaderboardScreen';
 import StationCard from './src/components/StationCard';
 import TrainCard from './src/components/TrainCard';
 import TransitMap from './src/components/TransitMap';
+
+import TeapotGame from './src/components/TeapotGame';
+import DuckGame from './src/components/DuckGame';
+import LobsterGame from './src/components/LobsterGame';
+
 import { ComingSoonScreen, CustomizeScreen, PlacesScreen } from './src/components/screens';
 import { isJunction, routeOptions, stations, stationsById } from './src/data/greenLine';
 import { landmarks, landmarksById } from './src/data/landmarks';
@@ -30,6 +35,8 @@ import { FONT_BODY, FONT_TITLE, PALETTE } from './src/theme/pixel';
 // "Park Street" vs "park st." shouldn't break name matching
 const normName = (s) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const stationByName = Object.fromEntries(stations.map((s) => [normName(s.name), s]));
+const boylstonId = stationByName.boylston?.id;
+const northStationId = stationByName.northstation?.id;
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
@@ -54,6 +61,22 @@ export default function App() {
   const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
   const [screen, setScreen] = useState(null);
+  const [showTeapotGame, setShowTeapotGame] = useState(false);
+  const [duckOpen, setDuckOpen] = useState(false);
+  useEffect(() => {
+    if (selectedId && selectedId === boylstonId) setDuckOpen(true);
+  }, [selectedId]);
+
+  const [lobsterOpen, setLobsterOpen] = useState(false);
+  useEffect(() => {
+    if (selectedId && selectedId === northStationId) setLobsterOpen(true);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (selected?.name === 'Government Center') {
+      setShowTeapotGame(true);
+    }
+  }, [selectedId]);
   // The corner avatar button sits just above the stop card when one is showing.
   const [cardHeight, setCardHeight] = useState(0);
   // Live Green Line trains, and the one whose card is open.
@@ -378,6 +401,35 @@ export default function App() {
             landmark={landmarksById[discoveryQueue[0]]}
             remaining={discoveryQueue.length - 1}
             onClose={() => setDiscoveryQueue((q) => q.slice(1))}
+          />
+        )}
+        {showTeapotGame && (
+          <TeapotGame
+            level={progress.level}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setShowTeapotGame(false)}
+          />
+        )}
+        {lobsterOpen && (
+          <LobsterGame
+            level={progress.level}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setLobsterOpen(false)}
+          />
+        )}
+        {duckOpen && (
+          <DuckGame
+            level={progress.level}
+            avatar={avatar}
+            onWin={(earnedXP) => {
+              progress.addMinigameXP(earnedXP);
+            }}
+            onClose={() => setDuckOpen(false)}
+            // renderHead={(size) => <AvatarSprite avatar={avatar} size={size} />}
           />
         )}
       </View>
