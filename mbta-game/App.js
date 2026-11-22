@@ -64,7 +64,8 @@ export default function App() {
     return list.find((a) => a.id === watchId) ?? list[0] ?? null;
   }, [arrivals.arrivals, live.trains, watchId]);
   const waitingFor = watched ? { trainId: watched.vehicleId, minutes: watched.minutes } : null;
-
+console.log('landmarks:', landmarks.length, landmarks.map((l) => l.id).join(', '));
+console.log('stations:', stations.map((s) => s.id).join(', '));
   // Fewer trains on the map: with a stop selected, only trains on its branches or close by
   // (plus your train and the one whose card is open). With no stop, every train shows.
   const visibleTrains = useMemo(() => {
@@ -77,7 +78,13 @@ export default function App() {
         Math.hypot(t.to.x - selected.x, t.to.y - selected.y) < NEARBY_M,
     );
   }, [live.trains, selected, waitingFor?.trainId, trainId]);
-  const menuBottom = selected || landmark || train ? CARD_BOTTOM + cardHeight + 12 : CARD_BOTTOM;
+  // How much of the map the open card covers, so the map keeps the stop visible above it.
+  const cardOpen = !!(selected || landmark || train);
+  const cardInset = cardOpen ? CARD_BOTTOM + cardHeight + 8 : 0;
+  // at a junction the signposts reach ~80 points around the stop, so leave room below it too
+  const stopInset = (id) => cardInsetRef.current + (id && isJunction(id) ? SIGN_ROOM : 0);
+  const cardInsetRef = useRef(0);
+  cardInsetRef.current = cardInset;
 
   // At a junction: the sign the rider has tapped once (tapping it again rides there).
   const [activeSignId, setActiveSignId] = useState(null);
@@ -88,7 +95,7 @@ export default function App() {
     setLandmarkId(null);
     setTrainId(null);
     setTrip({ currentId: id, previousId: null });
-    if (id) mapRef.current?.focusStation(stationsById[id]);
+    if (id) mapRef.current?.focusStation(stationsById[id], 0.25, stopInset(id));
   }, []);
 
   // Riding to a connected stop from the card remembers where we came from and follows the rider.
@@ -97,7 +104,7 @@ export default function App() {
     setLandmarkId(null);
     setTrainId(null);
     setTrip((t) => ({ currentId: id, previousId: t.currentId }));
-    mapRef.current?.focusStation(stationsById[id]);
+    mapRef.current?.focusStation(stationsById[id], 0.25, stopInset(id));
   }, []);
 
   // ---- XP: each arrival at a stop is a visit to its landmarks ----
@@ -110,7 +117,7 @@ export default function App() {
   }, [loaded, selectedId, recordVisit]);
 
   // ---- Leaderboard: push my score whenever it changes ----
-  const { player, setName, addFriend } = usePlayer();
+  const { player, setName, addFriend, removeFriend } = usePlayer();
   useEffect(() => {
     if (!player || !loaded) return;
     syncPlayer({
@@ -178,6 +185,12 @@ export default function App() {
   const walkToBoard = nearest ? walking[nearest.station.id]?.minutes ?? nearest.walkMinutes : 0;
   const totalMin = ride ? walkToBoard + ride.minutes : null;
 
+  useEffect(() => {
+    const target = landmark ?? selected;
+    const signRoom = !landmark && selected && isJunction(selected.id) ? SIGN_ROOM : 0;
+    if (target && cardHeight) mapRef.current?.keepVisible(target, cardInset + signRoom);
+  }, [cardHeight, cardInset, landmark, selected]);
+
   // Arriving at a stop discovers every landmark whose nearest stop it is (one popup each).
   useEffect(() => {
     if (!selectedId) return;
@@ -190,7 +203,7 @@ export default function App() {
   const openLandmark = useCallback((id) => {
     setTrainId(null);
     setLandmarkId(id);
-    mapRef.current?.focusStation(landmarksById[id]);
+    mapRef.current?.focusStation(landmarksById[id], 0.25, cardInsetRef.current);
   }, []);
 
   // One sign per way out of a junction; the way you came in is the BACK sign.
@@ -310,6 +323,7 @@ export default function App() {
 
         {selected && !landmark && !train && (
           <StationCard
+            key={selected.id} // a new stop opens as the short peek card again
             station={selected}
             previousId={trip.previousId}
             activeSignId={activeSignId}
@@ -322,7 +336,8 @@ export default function App() {
           />
         )}
 
-        <GameMenu avatar={avatar} bottom={menuBottom} onOpen={setScreen} />
+        {/* the avatar menu button steps aside while a card is open, to leave more map visible */}
+        {!cardOpen && <GameMenu avatar={avatar} bottom={CARD_BOTTOM} onOpen={setScreen} />}
 
         {screen === 'customize' && (
           <CustomizeScreen avatar={avatar} onSave={setAvatar} onClose={() => setScreen(null)} />
@@ -345,6 +360,7 @@ export default function App() {
             setName={setName}
             addFriend={addFriend}
             onClose={() => setScreen(null)}
+            removeFriend={removeFriend}
           />
         )}
         {screen === 'settings' && <ComingSoonScreen id={screen} onClose={() => setScreen(null)} />}
@@ -394,7 +410,9 @@ function StartHint() {
       <Text style={[styles.hintText, !on && { opacity: 0 }]}>▶ TAP A STOP TO START</Text>
       <Text style={styles.hintSub}>pinch or scroll to zoom · drag to pan</Text>
     </View>
+    
   );
+ 
 }
 
 const isWeb = Platform.OS === 'web';
@@ -402,6 +420,7 @@ const TOP = isWeb ? 16 : 56;      // header
 const XP_TOP = TOP + 56;          // XP box sits below the header
 const DIST_TOP = XP_TOP + 76;     // nearest-stop box sits below the XP box
 const CARD_BOTTOM = 16; // matches StationCard's bottom offset
+const SIGN_ROOM = 96; // extra space kept below a junction stop for its signposts
 const NEARBY_M = 1500; // trains within this many meters of your stop stay on the map
 
 const styles = StyleSheet.create({

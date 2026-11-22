@@ -5,17 +5,22 @@ import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
 /**
  * Arrivals board for a stop: the next few Green Line trains and how many minutes
  * away they are. The train you're waiting for is marked; tap another row to wait for that one.
+ * With `limit`, only that many rows show (the compact card shows just the train you're waiting for).
  */
-export default function NextTrains({ arrivals, status, watchedId, onWatch }) {
+export default function NextTrains({ arrivals, status, watchedId, onWatch, limit }) {
+  // compact: put the train you're waiting for first so it's the one that shows
+  const rows = limit
+    ? [...arrivals.filter((a) => a.id === watchedId), ...arrivals.filter((a) => a.id !== watchedId)].slice(0, limit)
+    : arrivals;
   return (
-    <View style={styles.board}>
-      <Text style={styles.title}>NEXT TRAINS</Text>
+    <View style={[styles.board, limit && styles.boardCompact]}>
+      <Text style={styles.title}>{limit === 1 ? 'NEXT TRAIN' : 'NEXT TRAINS'}</Text>
       {status === 'loading' && <Text style={styles.dim}>Checking the MBTA…</Text>}
       {(status === 'error' || status === 'rate-limited') && (
         <Text style={styles.dim}>{status === 'rate-limited' ? 'Too many requests, retrying soon' : 'Live times unavailable'}</Text>
       )}
       {status === 'live' && arrivals.length === 0 && <Text style={styles.dim}>No trains predicted right now</Text>}
-      {arrivals.map((a) => (
+      {rows.map((a) => (
         <Pressable
           key={a.id}
           onPress={() => onWatch(a.id)}
@@ -38,6 +43,7 @@ export default function NextTrains({ arrivals, status, watchedId, onWatch }) {
 
 const styles = StyleSheet.create({
   board: { marginTop: 10, backgroundColor: '#11131f', borderWidth: 2, borderColor: '#4a5276', padding: 8, gap: 4 },
+  boardCompact: { marginTop: 8, paddingVertical: 5, gap: 2 },
   title: { fontFamily: FONT_TITLE, fontSize: 8, color: PALETTE.gold, marginBottom: 2 },
   dim: { fontFamily: FONT_BODY, fontSize: 17, color: '#8f98b5' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 1, paddingRight: 4, borderWidth: 1, borderColor: 'transparent' },

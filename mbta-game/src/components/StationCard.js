@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isJunction, routeOptions, stationsById } from '../data/greenLine';
 import { FONT_BODY, FONT_TITLE, PALETTE } from '../theme/pixel';
@@ -35,18 +36,20 @@ function BranchTiles({ branches, small }) {
 }
 
 /** A way to ride from an ordinary stop: the next stop and where those trains end up. */
-function NextStopButton({ fromId, option, onSelect }) {
+function NextStopButton({ fromId, option, onSelect, compact }) {
   return (
-    <PixelButton onPress={() => onSelect(option.id)} style={styles.next}>
+    <PixelButton onPress={() => onSelect(option.id)} style={[styles.next, compact && styles.nextCompact]}>
       <MapArrow fromId={fromId} toId={option.id} />
       <BranchTiles branches={option.branches} small />
       <View style={{ flex: 1 }}>
         <Text style={styles.nextName} numberOfLines={1}>
           {stationsById[option.id].name}
         </Text>
-        <Text style={styles.toward} numberOfLines={1}>
-          toward {option.toward.join(' / ')}
-        </Text>
+        {!compact && (
+          <Text style={styles.toward} numberOfLines={1}>
+            toward {option.toward.join(' / ')}
+          </Text>
+        )}
       </View>
       <Text style={styles.nextGo}>▶</Text>
     </PixelButton>
@@ -57,7 +60,7 @@ function NextStopButton({ fromId, option, onSelect }) {
  * When the next stop is a junction it gets a bigger banner that previews the
  * branches you can take once you get there (not counting the way back here).
  */
-function JunctionBanner({ fromId, option, onSelect }) {
+function JunctionBanner({ fromId, option, onSelect, compact }) {
   const ahead = routeOptions(option.id).filter((o) => o.id !== fromId);
   return (
     <PixelButton onPress={() => onSelect(option.id)} style={styles.banner}>
@@ -70,8 +73,8 @@ function JunctionBanner({ fromId, option, onSelect }) {
           <Text style={styles.junctionTagText}>★ JUNCTION</Text>
         </View>
       </View>
-      <Text style={styles.bannerLead}>From there you can take:</Text>
-      {ahead.map((o) => (
+      {compact ? null : <Text style={styles.bannerLead}>From there you can take:</Text>}
+      {(compact ? [] : ahead).map((o) => (
         <View key={o.id} style={styles.bannerRow}>
           <BranchTiles branches={o.branches} small />
           <Text style={styles.bannerRowText} numberOfLines={1}>
@@ -79,24 +82,24 @@ function JunctionBanner({ fromId, option, onSelect }) {
           </Text>
         </View>
       ))}
-      <Text style={styles.bannerGo}>RIDE TO {stationsById[option.id].name.toUpperCase()} ▶</Text>
+      {compact ? null : <Text style={styles.bannerGo}>RIDE TO {stationsById[option.id].name.toUpperCase()} ▶</Text>}
     </PixelButton>
   );
 }
 
 /** Ordinary stop: one button per way you can go, labelled by destination instead of arrows. */
-function NextStops({ station, onSelect }) {
+function NextStops({ station, onSelect, compact }) {
   const options = routeOptions(station.id);
   return (
     <View style={styles.nextList}>
       {options.map((o) =>
         isJunction(o.id) ? (
-          <JunctionBanner key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
+          <JunctionBanner key={o.id} fromId={station.id} option={o} onSelect={onSelect} compact={compact} />
         ) : (
-          <NextStopButton key={o.id} fromId={station.id} option={o} onSelect={onSelect} />
+          <NextStopButton key={o.id} fromId={station.id} option={o} onSelect={onSelect} compact={compact} />
         ),
       )}
-      {options.length === 1 && <Text style={styles.hint}>End of the line. The only way is back.</Text>}
+      {options.length === 1 && !compact && <Text style={styles.hint}>End of the line. The only way is back.</Text>}
     </View>
   );
 }
@@ -140,41 +143,80 @@ function JunctionInfo({ station, previousId, activeSignId, onSelect }) {
 }
 
 /** Game dialog box with a station's data: line, name, order on each branch, and where you can go next. */
+/**
+ * Game dialog box for a stop. It opens as a short "peek" card (name, the next train and
+ * compact ride buttons) so most of the map stays visible; tap or swipe up on the handle,
+ * or press MORE, to expand it to every arrival and the full ride options.
+ */
 export default function StationCard({ station, previousId, activeSignId, arrivals, watchedId, onWatch, onSelect, onClose, onLayout }) {
+  const [expanded, setExpanded] = useState(false);
+  const junction = isJunction(station.id);
+  const branchText = station.branches.map((b) => `${b}-${String(station.order[b]).padStart(2, '0')}`).join(' · ');
+
+  // the handle: a tap toggles, a swipe up expands, a swipe down collapses
+  const handle = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onPanResponderRelease: (e, g) => {
+          if (g.dy < -20) setExpanded(true);
+          else if (g.dy > 20) setExpanded(false);
+          else if (Math.abs(g.dx) < 10) setExpanded((v) => !v);
+        },
+      }),
+    [],
+  );
+
   return (
     <View style={[ui.panel, styles.frame]} onLayout={onLayout}>
+      <View {...handle.panHandlers} style={styles.handleArea} accessibilityRole="button" accessibilityLabel={expanded ? 'Show less' : 'Show more'}>
+        <View style={styles.handle} />
+      </View>
+
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>T</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{station.name.toUpperCase()}</Text>
-          <Text style={styles.sub}>
-            {station.line} Line{station.terminus ? ' · end of line' : ''}
-            {station.transfers.length ? ` · ★ transfer: ${station.transfers.join(', ')}` : ''}
+          <Text style={styles.sub} numberOfLines={expanded ? undefined : 1}>
+            {expanded ? `${station.line} Line` : branchText}
+            {station.terminus ? ' · end of line' : ''}
+            {station.transfers.length ? ` · ★ ${expanded ? 'transfer: ' : ''}${station.transfers.join(', ')}` : ''}
           </Text>
         </View>
+        <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={8} style={styles.more}>
+          <Text style={styles.moreText}>{expanded ? 'LESS ▼' : 'MORE ▲'}</Text>
+        </Pressable>
         <Pressable onPress={onClose} hitSlop={12}>
           <Text style={styles.close}>X</Text>
         </Pressable>
       </View>
 
-      <View style={styles.chips}>
-        {station.branches.map((b) => (
-          <View key={b} style={styles.chip}>
-            <Text style={styles.chipText}>
-              {b}-{String(station.order[b]).padStart(2, '0')}
-            </Text>
-          </View>
-        ))}
-      </View>
+      {expanded && (
+        <View style={styles.chips}>
+          {station.branches.map((b) => (
+            <View key={b} style={styles.chip}>
+              <Text style={styles.chipText}>
+                {b}-{String(station.order[b]).padStart(2, '0')}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
 
-      <NextTrains arrivals={arrivals.arrivals} status={arrivals.status} watchedId={watchedId} onWatch={onWatch} />
+      <NextTrains
+        arrivals={arrivals.arrivals}
+        status={arrivals.status}
+        watchedId={watchedId}
+        onWatch={onWatch}
+        limit={expanded ? undefined : 1}
+      />
 
-      {isJunction(station.id) ? (
+      {junction ? (
         <JunctionInfo station={station} previousId={previousId} activeSignId={activeSignId} onSelect={onSelect} />
       ) : (
-        <NextStops station={station} onSelect={onSelect} />
+        <NextStops station={station} onSelect={onSelect} compact={!expanded} />
       )}
     </View>
   );
@@ -222,7 +264,12 @@ const styles = StyleSheet.create({
   branchTileSmall: { width: 18, height: 18 },
   branchTileTextSmall: { fontSize: 8 },
 
-  nextList: { marginTop: 12, gap: 8 },
+  nextList: { marginTop: 10, gap: 6 },
+  nextCompact: { paddingVertical: 4 },
+  handleArea: { alignItems: 'center', paddingBottom: 6, marginTop: -4 },
+  handle: { width: 40, height: 5, backgroundColor: '#6b7393' },
+  more: { borderWidth: 2, borderColor: '#6b7393', paddingHorizontal: 5, paddingVertical: 3 },
+  moreText: { fontFamily: FONT_TITLE, fontSize: 7, color: '#c9cfe0' },
   arrowTile: {
     width: 24,
     height: 24,

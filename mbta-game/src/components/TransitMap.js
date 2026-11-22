@@ -31,6 +31,9 @@ import PlayerAvatar, { PLAYER_HEIGHT } from './PlayerAvatar';
 const TAP_SLOP = 8; // px a finger may move and still count as a tap
 const HIT_RADIUS = 26; // px around a stop that counts as touching it
 const MAX_SCALE = 1.6; // px per meter at full zoom-in
+const TOP_INSET = 72; // the header and zoom buttons cover the top of the map
+const HEAD_ROOM = 56; // room above a focused stop for the rider's head and its label
+const SETTLE_MS = 180; // redraw the background sharp this long after a zoom stops
 const PAN_MARGIN = 3000; // m the view centre may go past the Green Line's outermost stops
 const LABEL_SCALE = 0.09; // zoom level at which every stop gets a name label
 const LANDMARK_SCALE = 0.09; // landmarks appear once you zoom in this far...
@@ -106,6 +109,13 @@ function fitCamera(width, height) {
   };
 }
 
+/** Middle of the map area left between the header and a card covering `bottomInset` points. */
+function visibleCentreY(height, bottomInset) {
+  const top = TOP_INSET + HEAD_ROOM;
+  const bottom = Math.max(top + 40, height - bottomInset);
+  return (top + bottom) / 2;
+}
+
 const distance = (a, b) => Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
 const midpoint = (a, b) => ({ x: (a.pageX + b.pageX) / 2, y: (a.pageY + b.pageY) / 2 });
 
@@ -144,7 +154,7 @@ const TransitMap = forwardRef(function TransitMap(
   const minScaleRef = useRef(0);
   const containerRef = useRef(null);
   const onSelectRef = useRef(onSelectStation);
-  cameraRef.current = camera;
+  // cameraRef is set by applyCamera and is always the newest camera (state may lag a frame)
   sizeRef.current = size;
   onSelectRef.current = onSelectStation;
   const onSignRef = useRef(onSignPress);
@@ -157,7 +167,23 @@ const TransitMap = forwardRef(function TransitMap(
   onTrainRef.current = onTrainPress;
   const trainHitsRef = useRef([]);
 
-  const applyCamera = useCallback((next) => {
+  // The background (parks, water, sea, lines, track, stop icons) is drawn once for an
+  // area twice the size of the screen around `baseCam`, then reused while you pan or
+  // pinch: it's only slid and scaled. It's redrawn when you pan near its edge, and
+  // redrawn sharp shortly after a zoom settles.
+  const [baseCam, setBaseCam] = useState(null);
+  const baseXformRef = useRef({ k: 1, tx: 0, ty: 0 }); // cached layer -> screen, for taps
+
+  // Touch events can arrive faster than the screen refreshes: remember the newest camera
+  // right away, but update the map at most once per frame.
+  const pendingFrame = useRef(false);
+  const flushCamera = useCallback(() => {
+    if (!pendingFrame.current) return;
+    pendingFrame.current = false;
+    setCamera(cameraRef.current);
+  }, []);
+
+  const applyCamera = useCallback((next, immediate = false) => {
     const scale = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next.scale));
     // keep the view centred near the Green Line so you can't scroll off into empty map
     const cam = {
@@ -166,8 +192,17 @@ const TransitMap = forwardRef(function TransitMap(
       cy: Math.min(greenBounds.maxY + PAN_MARGIN, Math.max(greenBounds.minY - PAN_MARGIN, next.cy)),
     };
     cameraRef.current = cam;
-    setCamera(cam);
-  }, []);
+    if (immediate) {
+      pendingFrame.current = false;
+      setCamera(cam);
+      return;
+    }
+    if (!pendingFrame.current) {
+      pendingFrame.current = true;
+      requestAnimationFrame(flushCamera);
+      setTimeout(flushCamera, 34); // in case animation frames are paused (e.g. a background tab)
+    }
+  }, [flushCamera]);
 
   // Zoom by `factor`, keeping the world point under screen point (px, py) fixed.
   const zoomAt = useCallback(
@@ -191,13 +226,27 @@ const TransitMap = forwardRef(function TransitMap(
     zoomIn: () => sizeRef.current && zoomAt(1.6, sizeRef.current.width / 2, sizeRef.current.height / 2),
     zoomOut: () => sizeRef.current && zoomAt(1 / 1.6, sizeRef.current.width / 2, sizeRef.current.height / 2),
     reset: () => sizeRef.current && applyCamera(fitCamera(sizeRef.current.width, sizeRef.current.height)),
-    focusStation: (station, minScale = 0.25) => {
+    // Centre a stop (or landmark) in the part of the map that isn't covered by the
+    // header at the top or the card at the bottom (bottomInset, in screen points).
+    focusStation: (station, minScale = 0.25, bottomInset = 0) => {
       const cam = cameraRef.current;
-      if (!cam) return;
+      const sz = sizeRef.current;
+      if (!cam || !sz) return;
       const scale = Math.max(cam.scale, minScale);
-      // sit the stop in the upper part of the screen so the info card doesn't cover it
-      const lift = (sizeRef.current?.height ?? 0) * 0.18;
-      applyCamera({ scale, cx: station.x, cy: station.y - lift / scale });
+      const targetY = visibleCentreY(sz.height, bottomInset);
+      applyCamera({ scale, cx: station.x, cy: station.y + (targetY - sz.height / 2) / scale });
+    },
+    // Only move the map if the stop would be hidden behind the card or the header.
+    keepVisible: (station, bottomInset = 0) => {
+      const cam = cameraRef.current;
+      const sz = sizeRef.current;
+      if (!cam || !sz) return;
+      const sy = (cam.cy - station.y) * cam.scale + sz.height / 2;
+      const sx = (station.x - cam.cx) * cam.scale + sz.width / 2;
+      const hidden = sy > sz.height - bottomInset - 24 || sy < TOP_INSET + HEAD_ROOM || sx < 16 || sx > sz.width - 16;
+      if (!hidden) return;
+      const targetY = visibleCentreY(sz.height, bottomInset);
+      applyCamera({ scale: cam.scale, cx: station.x, cy: station.y + (targetY - sz.height / 2) / cam.scale });
     },
   }));
 
@@ -286,7 +335,13 @@ const TransitMap = forwardRef(function TransitMap(
           const inBox = (h) => g.tap.x >= h.x0 && g.tap.x <= h.x1 && g.tap.y >= h.y0 && g.tap.y <= h.y1;
           const sign = hitSign(placedSignsRef.current, g.tap.x, g.tap.y);
           const exactStop = sign ? null : hitTest(g.tap.x, g.tap.y, 10);
-          const train = sign || exactStop ? null : trainHitsRef.current.find(inBox);
+          const T = baseXformRef.current;
+          const inBaseBox = (h) => {
+            const x = (g.tap.x - T.tx) / T.k;
+            const y = (g.tap.y - T.ty) / T.k;
+            return x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1;
+          };
+          const train = sign || exactStop ? null : trainHitsRef.current.find(inBaseBox);
           const landmark = sign || exactStop || train ? null : landmarkHitsRef.current.find(inBox);
           if (sign) {
             onSignRef.current?.(sign.id);
@@ -316,7 +371,7 @@ const TransitMap = forwardRef(function TransitMap(
       sizeRef.current = { width, height };
       const fit = fitCamera(width, height);
       minScaleRef.current = fit.scale * 0.9; // a little past "whole line fits"
-      if (!cameraRef.current) applyCamera(fit);
+      if (!cameraRef.current) applyCamera(fit, true); // first view: show the map right away
       measureOrigin();
     },
     [applyCamera, measureOrigin],
@@ -336,12 +391,33 @@ const TransitMap = forwardRef(function TransitMap(
     return () => node.removeEventListener('wheel', onWheel);
   }, [zoomAt, size]);
 
-  // ---- rasterize everything into screen-space pixels for the current camera
-  const projected = useMemo(() => {
-    if (!camera || !size) return null;
-    const { scale, cx, cy } = camera;
-    const { width, height } = size;
-    // World origin on screen; the pixel grid is anchored to it so pixels slide with the map.
+  // ---- keep the cached background covering the screen
+  useEffect(() => {
+    if (!camera || !size) return undefined;
+    if (!baseCam) {
+      setBaseCam(camera);
+      return undefined;
+    }
+    const k = camera.scale / baseCam.scale;
+    // the cached area reaches k * (screen size) from its centre; redraw before an edge shows
+    const dx = Math.abs(camera.cx - baseCam.cx) * camera.scale;
+    const dy = Math.abs(camera.cy - baseCam.cy) * camera.scale;
+    if (dx > size.width * (k - 0.5) - 8 || dy > size.height * (k - 0.5) - 8) {
+      setBaseCam(camera);
+      return undefined;
+    }
+    if (k === 1) return undefined; // a plain pan: nothing to sharpen
+    const id = setTimeout(() => setBaseCam(cameraRef.current), SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [camera, size, baseCam]);
+
+  // ---- the heavy part: rasterize the background into pixels around baseCam
+  const base = useMemo(() => {
+    if (!baseCam || !size) return null;
+    const { scale, cx, cy } = baseCam;
+    const width = size.width * 2; // the cached area: the screen plus half a screen on every side
+    const height = size.height * 2;
+    // World origin in the cached area's coordinates; the pixel grid is anchored to it.
     const OX = width / 2 - cx * scale;
     const OY = height / 2 + cy * scale;
     const gox = Math.round(((OX % PX) + PX) % PX) - PX;
@@ -386,44 +462,85 @@ const TransitMap = forwardRef(function TransitMap(
       highlight: style.track >= 2 ? cellsToPath(topEdge(fill), gox, goy) : '',
     };
 
-    // stops, snapped to the pixel grid
-    const margin = 40;
-    const stops = [];
+    // stop icons, snapped to the pixel grid
     const sprites = {};
     for (const st of stations) {
       const sx = st.x * scale + OX;
       const sy = -st.y * scale + OY;
-      if (sx < -margin || sy < -margin || sx > width + margin || sy > height + margin) continue;
+      if (sx < -40 || sy < -40 || sx > width + 40 || sy > height + 40) continue;
       const x = gox + (Math.floor((sx - gox) / PX) + 0.5) * PX;
       const y = goy + (Math.floor((sy - goy) / PX) + 0.5) * PX;
-      stops.push({ station: st, x, y });
       stampSprite(sprites, st.transfers.length ? style.transfer : style.sprite, x, y, style.s);
     }
     const spritePaths = Object.entries(sprites).map(([color, sq]) => ({ color, d: squaresToPath(sq) }));
     const spriteHalf = (style.sprite.length * style.s) / 2;
 
+    return { scale, OX, OY, gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, spritePaths, spriteHalf };
+  }, [baseCam, size]);
+
+  // ---- the light part, every frame: where things are on screen right now
+  const projected = useMemo(() => {
+    if (!camera || !size || !base) return null;
+    const { scale, cx, cy } = camera;
+    const { width, height } = size;
+    const OX = width / 2 - cx * scale;
+    const OY = height / 2 + cy * scale;
+    const gox = Math.round(((OX % PX) + PX) % PX) - PX;
+    const goy = Math.round(((OY % PX) + PX) % PX) - PX;
+    // how the cached background maps onto the screen right now
+    const k = scale / base.scale;
+    const tx = Math.round(OX - base.OX * k);
+    const ty = Math.round(OY - base.OY * k);
+    const baseTransform = `translate(${tx} ${ty}) scale(${k})`;
+
+    // stop positions (for labels, taps, the rider and junction signs)
+    const margin = 40;
+    const stops = [];
+    for (const st of stations) {
+      const x = st.x * scale + OX;
+      const y = -st.y * scale + OY;
+      if (x < -margin || y < -margin || x > width + margin || y > height + margin) continue;
+      stops.push({ station: st, x, y });
+    }
+    const spriteHalf = base.spriteHalf * k;
+
     // landmarks, bottom-centre on their real location, only when zoomed in
     const look = landmarkLook(scale);
     // the landmark whose card is open is always shown, as its full building at the largest size
     const placedLandmarks = landmarks
-            .filter((lm) => scale >= LANDMARK_SCALE || lm.id === openLandmarkId)
-            .map((lm) => {
-              const x = Math.round(lm.x * scale + OX);
-              const y = Math.round(-lm.y * scale + OY);
-              const open = lm.id === openLandmarkId;
-              const here = open ? { pin: false, px: 3 } : look;
-              const art = here.pin ? LANDMARK_PIN : lm.sprite;
-              const w = art[0].length * here.px;
-              const h = art.length * here.px;
-              return { landmark: lm, x, y, w, h, px: here.px, pin: here.pin, open, // the nameplate to the right of the sprite is tappable too
-              hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 } };
-            })
-            .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
+      .filter((lm) => scale >= LANDMARK_SCALE || lm.id === openLandmarkId)
+      .map((lm) => {
+        const x = Math.round(lm.x * scale + OX);
+        const bx = Math.round(lm.x * base.scale + base.OX); // in the cached layer: unchanged while panning
+        const by = Math.round(-lm.y * base.scale + base.OY);
+        const y = Math.round(-lm.y * scale + OY);
+        const open = lm.id === openLandmarkId;
+        const here = open ? { pin: false, px: 3 } : look;
+        const art = here.pin ? LANDMARK_PIN : lm.sprite;
+        const w = art[0].length * here.px;
+        const h = art.length * here.px;
+        return {
+          landmark: lm,
+          x,
+          y,
+          w,
+          h,
+          px: here.px,
+          pin: here.pin,
+          open,
+          bx,
+          by,
+          // the nameplate to the right of the sprite is tappable too
+          hit: { id: lm.id, x0: x - w / 2 - 4, x1: x + w / 2 + 2 + (lm.shortName.length + 2) * LABEL_SIZE + 8, y0: y - h - 4, y1: y + 4 },
+        };
+      })
+      .filter(({ x, y, w, h }) => x + w > -20 && x - w < width + 20 && y > -20 && y - h < height + 20);
 
     const stationToScreen = (st) => ({ x: st.x * scale + OX, y: -st.y * scale + OY });
-    return { gox, goy, parkPaths, waterPaths, otherPaths, greenPaths, stops, spritePaths, spriteHalf, stationToScreen, placedLandmarks, OX, OY };
-  }, [camera, size, openLandmarkId]);
+    return { gox, goy, k, tx, ty, baseTransform, stops, spriteHalf, stationToScreen, placedLandmarks, OX, OY };
+  }, [camera, size, base, openLandmarkId]);
 
+  if (projected) baseXformRef.current = { k: projected.k, tx: projected.tx, ty: projected.ty };
   const scale = camera?.scale ?? 0;
   const showAllLabels = scale >= LABEL_SCALE;
   if (!liveTrains.length) trainHitsRef.current = []; // no trains drawn, nothing to tap
@@ -533,8 +650,8 @@ const TransitMap = forwardRef(function TransitMap(
             <Pattern
               id="parkland"
               patternUnits="userSpaceOnUse"
-              x={projected.gox}
-              y={projected.goy}
+              x={base.gox}
+              y={base.goy}
               width={PARK_TILE * PX}
               height={PARK_TILE * PX}
             >
@@ -546,8 +663,8 @@ const TransitMap = forwardRef(function TransitMap(
             <Pattern
               id="waves"
               patternUnits="userSpaceOnUse"
-              x={projected.gox}
-              y={projected.goy}
+              x={base.gox}
+              y={base.goy}
               width={WAVE_TILE * PX}
               height={WAVE_TILE * PX}
             >
@@ -559,71 +676,78 @@ const TransitMap = forwardRef(function TransitMap(
           </Defs>
           <Rect width={size.width} height={size.height} fill="url(#ground)" />
 
-          {/* parks */}
-          {projected.parkPaths.edge ? <Path d={projected.parkPaths.edge} fill={PALETTE.parkEdge} /> : null}
-          {projected.parkPaths.fill ? <Path d={projected.parkPaths.fill} fill="url(#parkland)" /> : null}
+          {/* cached background: parks, water, other lines, track (slid/scaled into place) */}
+          <G transform={projected.baseTransform}>
+            {/* parks */}
+            {base.parkPaths.edge ? <Path d={base.parkPaths.edge} fill={PALETTE.parkEdge} /> : null}
+            {base.parkPaths.fill ? <Path d={base.parkPaths.fill} fill="url(#parkland)" /> : null}
 
-          {/* rivers, ponds and reservoirs */}
-          {projected.waterPaths.shore ? <Path d={projected.waterPaths.shore} fill={PALETTE.shore} /> : null}
-          {projected.waterPaths.sea ? <Path d={projected.waterPaths.sea} fill="url(#waves)" /> : null}
-          {projected.waterPaths.fill ? <Path d={projected.waterPaths.fill} fill="url(#waves)" /> : null}
+            {/* rivers, ponds and reservoirs */}
+            {base.waterPaths.shore ? <Path d={base.waterPaths.shore} fill={PALETTE.shore} /> : null}
+            {base.waterPaths.sea ? <Path d={base.waterPaths.sea} fill="url(#waves)" /> : null}
+            {base.waterPaths.fill ? <Path d={base.waterPaths.fill} fill="url(#waves)" /> : null}
 
-          {/* the rest of the MBTA, muted */}
-          <G opacity={0.45}>
-            {projected.otherPaths.map(({ line, d }) => (
-              <Path key={line} d={d} fill={LINE_PIXEL_COLORS[line] ?? PALETTE.silver} />
-            ))}
+            {/* the rest of the MBTA, muted */}
+            <G opacity={0.45}>
+              {base.otherPaths.map(({ line, d }) => (
+                <Path key={line} d={d} fill={LINE_PIXEL_COLORS[line] ?? PALETTE.silver} />
+              ))}
+            </G>
+
+            {/* Green Line track */}
+            <Path d={base.greenPaths.outline} fill={PALETTE.greenDark} />
+            <Path d={base.greenPaths.fill} fill={PALETTE.green} />
+            {base.greenPaths.highlight ? <Path d={base.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
           </G>
 
-          {/* Green Line track */}
-          <Path d={projected.greenPaths.outline} fill={PALETTE.greenDark} />
-          <Path d={projected.greenPaths.fill} fill={PALETTE.green} />
-          {projected.greenPaths.highlight ? <Path d={projected.greenPaths.highlight} fill={PALETTE.greenLight} /> : null}
-
-          {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
-          {projected.placedLandmarks.filter((p) => !p.open).map(({ landmark, x, y, px, pin }) => {
-            const known = !!discovered?.[landmark.id];
-            return pin ? (
-              <LandmarkPin key={landmark.id} x={x} y={y} px={px} discovered={known} />
-            ) : (
-              // undiscovered buildings are faded so they tease rather than compete
-              <G key={landmark.id} opacity={known ? 1 : 0.6}>
-                <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={known} />
-              </G>
-            );
-          })}
-
-          {/* stop sprites */}
-          {projected.spritePaths.map(({ color, d }) => (
-            <Path key={color} d={d} fill={color} />
-          ))}
-
-          {/* live trains (from the MBTA API) */}
-          {liveTrains.length > 0 && (
-            <LiveTrains
-              trains={liveTrains}
-              scale={scale}
-              OX={projected.OX}
-              OY={projected.OY}
-              width={size.width}
-              height={size.height}
-              selectedId={selectedTrainId}
-              waitingFor={waitingFor}
-              hitsRef={trainHitsRef}
-            />
-          )}
-
-          {/* the open landmark, big and on top, with a soft gold glow at its base */}
-          {projected.placedLandmarks
-            .filter((p) => p.open)
-            .map(({ landmark, x, y, w, px }) => (
-              <G key={`open-${landmark.id}`}>
-                <Ellipse cx={x} cy={y} rx={w * 0.75} ry={px * 5} fill="url(#landmarkGlow)" />
-                <G opacity={discovered?.[landmark.id] ? 1 : 0.85}>
-                  <AnimatedLandmarkPaths landmark={landmark} x={x} y={y} px={px} discovered={!!discovered?.[landmark.id]} />
+          {/* everything below lives in the cached layer's coordinates, so panning only moves
+              this one group; sizes are divided by k so they stay put on screen */}
+          <G transform={projected.baseTransform}>
+            {/* landmarks (under the stops so a nearby stop stays tappable-looking) */}
+            {projected.placedLandmarks.filter((p) => !p.open).map(({ landmark, bx, by, px, pin }) => {
+              const known = !!discovered?.[landmark.id];
+              return pin ? (
+                <LandmarkPin key={landmark.id} x={bx} y={by} px={px / projected.k} discovered={known} />
+              ) : (
+                // undiscovered buildings are faded so they tease rather than compete
+                <G key={landmark.id} opacity={known ? 1 : 0.6}>
+                  <AnimatedLandmarkPaths landmark={landmark} x={bx} y={by} px={px / projected.k} discovered={known} />
                 </G>
-              </G>
+              );
+            })}
+
+            {/* stop icons */}
+            {base.spritePaths.map(({ color, d }) => (
+              <Path key={color} d={d} fill={color} />
             ))}
+
+            {/* live trains (from the MBTA API) */}
+            {liveTrains.length > 0 && (
+              <LiveTrains
+                trains={liveTrains}
+                scale={base.scale}
+                OX={base.OX}
+                OY={base.OY}
+                width={size.width * 2}
+                height={size.height * 2}
+                selectedId={selectedTrainId}
+                waitingFor={waitingFor}
+                hitsRef={trainHitsRef}
+              />
+            )}
+
+            {/* the open landmark, big and on top, with a soft gold glow at its base */}
+            {projected.placedLandmarks
+              .filter((p) => p.open)
+              .map(({ landmark, bx, by, w, px }) => (
+                <G key={`open-${landmark.id}`}>
+                  <Ellipse cx={bx} cy={by} rx={(w * 0.75) / projected.k} ry={(px * 5) / projected.k} fill="url(#landmarkGlow)" />
+                  <G opacity={discovered?.[landmark.id] ? 1 : 0.85}>
+                    <AnimatedLandmarkPaths landmark={landmark} x={bx} y={by} px={px / projected.k} discovered={!!discovered?.[landmark.id]} />
+                  </G>
+                </G>
+              ))}
+          </G>
 
           {/* nameplates for stops and landmarks, overlapping ones left out (see placedLabels) */}
           {placedLabels.map((l) => (

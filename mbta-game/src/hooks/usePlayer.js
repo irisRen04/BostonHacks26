@@ -32,6 +32,9 @@ export default function usePlayer() {
     if (!c || c === player?.code || player?.friends.includes(c)) return;
     update({ friends: [...player.friends, c] });
   };
+  const removeFriend = (code) =>
+    update({ friends: (player?.friends ?? []).filter((c) => c !== code) });
 
-  return { player, setName, addFriend };
+  return { player, setName, addFriend, removeFriend };
+
 }
