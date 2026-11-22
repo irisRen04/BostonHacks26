@@ -42,12 +42,14 @@ export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
 
   // Music: loading track while fonts load, then the gameplay track
+  // Music: loading track on the title screen, gameplay track once the player taps START
   useEffect(() => {
     initAudio();
   }, []);
+  const [started, setStarted] = useState(false);
   useEffect(() => {
-    playMusic(fontsLoaded ? 'gameplay' : 'loading');
-  }, [fontsLoaded]);
+    playMusic(started ? 'gameplay' : 'loading');
+  }, [started]);
 
   const mapRef = useRef(null);
   // The rider's position: the stop they're at, and the stop they just came from.
@@ -61,7 +63,7 @@ export default function App() {
   const [discoveryQueue, setDiscoveryQueue] = useState([]);
   const landmark = landmarkId ? landmarksById[landmarkId] : null;
   // Which menu screen is open: null, 'customize', 'places', 'friends' or 'settings'.
-  const [started, setStarted] = useState(false);
+  
   const [screen, setScreen] = useState(null);
 
   // ---- minigames ----
