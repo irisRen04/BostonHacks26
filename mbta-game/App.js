@@ -4,7 +4,7 @@ import { VT323_400Regular } from '@expo-google-fonts/vt323';
 import { useFonts } from 'expo-font';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-
+import { initAudio, playMusic, playSfx } from './src/audio/sounds';
 import useAvatar from './src/avatar/useAvatar';
 import GameMenu from './src/components/GameMenu';
 import LandmarkCard, { DiscoveryPopup } from './src/components/LandmarkCard';
@@ -33,6 +33,14 @@ const stationByName = Object.fromEntries(stations.map((s) => [normName(s.name), 
 
 export default function App() {
   const [fontsLoaded] = useFonts({ PressStart2P_400Regular, VT323_400Regular });
+    // Music: loading track while fonts load, then the gameplay track
+  useEffect(() => {
+    initAudio();
+  }, []);
+  useEffect(() => {
+    playMusic(fontsLoaded ? 'gameplay' : 'loading');
+  }, [fontsLoaded]);
+  
   const mapRef = useRef(null);
   // The rider's position: the stop they're at, and the stop they just came from.
   const [trip, setTrip] = useState({ currentId: null, previousId: null });
@@ -381,7 +389,13 @@ console.log('stations:', stations.map((s) => s.id).join(', '));
 
 function ZoomButton({ label, onPress }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.zoomBtn, pressed ? styles.zoomBtnPressed : styles.zoomBtnUp]}>
+    <Pressable
+      onPress={() => {
+        playSfx('click');
+        onPress();
+      }}
+      style={({ pressed }) => [styles.zoomBtn, pressed ? styles.zoomBtnPressed : styles.zoomBtnUp]}
+    >
       <Text style={styles.zoomText}>{label}</Text>
     </Pressable>
   );

@@ -3,6 +3,7 @@
 import { PALETTE } from '../theme/pixel';
 import * as art from './landmarkSprites';
 import { moreLandmarks } from './moreLandmarks';
+import { generatedSprites } from './generatedSprites';
 
 /**
  * Build a tower of offset, stacked glass blocks (like CDS's "Jenga" floors).
@@ -343,9 +344,10 @@ export const landmarks = [
       blurb: "A hilltop campus at the very end of the Green Line's E branch.",
       fact: "Tufts' mascot is Jumbo, named after P.T. Barnum's famous circus elephant.",
     },
-    ].map(({ draw, ...entry }) => {
+      ].map(({ draw, ...entry }) => {
     const { rows, colors } = draw();
-    return { ...entry, sprite: rows, colors };
+    const art = generatedSprites[entry.id]; // your PNG art wins if it exists
+    return { ...entry, sprite: art?.rows ?? rows, colors: art?.colors ?? colors };
   }),
   ...moreLandmarks,
 ];

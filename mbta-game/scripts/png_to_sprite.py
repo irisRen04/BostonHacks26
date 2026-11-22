@@ -24,6 +24,13 @@ FILE_TO_ID = {
     "paulrevere": "paul-revere-house",
     "freedomtrail": "freedom-trail",
     "esplanadetrail": "esplanade",
+        "bostonpubliclibrary": "bpl",
+    "fenwaypark": "fenway-park",
+    "mfa": "mfa",
+    "museumofscience": "museum-of-science",
+    "prudential": "prudential",
+    "statehouse": "state-house",
+    "tdgarden": "td-garden",
 }
 CHARS = "ABCDEFGHIJLMNOPQRSTUVWXYZ"  # no K (outline ink) and no '.' (transparent)
 
