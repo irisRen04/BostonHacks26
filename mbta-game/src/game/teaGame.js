@@ -28,7 +28,7 @@ const TEAPOT_MIN_X = TEAPOT_W / 2 + 4;
 const TEAPOT_MAX_X = FIELD_W - TEAPOT_W / 2 - 4;
 
 /** XP for winning: 40 * 2^(level - 1). Level 1 = 40, level 2 = 80, level 3 = 160 ... */
-export const xpReward = (level) => 40 * 2 ** (Math.max(1, Math.floor(level) || 1) - 1);
+export const xpReward = (level) => Math.floor((1/20) * Math.floor(level));
 
 export function createGame(rng = Math.random) {
   return {

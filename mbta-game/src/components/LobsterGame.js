@@ -305,7 +305,7 @@ const freshGame = () => ({
 });
 
 export default function LobsterGame({ level = 1, onWin, onClose }) {
-  const reward = 40 + 2 * (level - 1);
+  const reward = Math.floor((1/20) * Math.floor(level));
   const game = useRef(freshGame());
   const phaseRef = useRef('intro');
   const [phase, setPhaseState] = useState('intro'); // intro | ready | playing | dive | won | lost
